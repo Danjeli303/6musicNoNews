@@ -511,6 +511,8 @@ static void test_format_epoch_ms_with_utc_offset(void)
 
     EXPECT_TRUE(format_epoch_ms_with_utc_offset(-1, 0, buffer, sizeof(buffer)));
     EXPECT_STREQ("1969-12-31 23:59:59.999 +00:00", buffer);
+
+    EXPECT_FALSE(format_epoch_ms_with_utc_offset(0, 24 * 60, buffer, sizeof(buffer)));
 }
 
 static void test_command_line_parsing(void)

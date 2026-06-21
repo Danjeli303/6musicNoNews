@@ -12,6 +12,8 @@
 
 #include "skipper_time.h"
 
+#define MAX_UTC_OFFSET_MINUTES (23 * 60 + 59)
+
 static int parse_fixed_digits (const char **text_ptr, int digit_count, int *value_out);
 
 int parse_iso8601_timestamp_ms (const char *time_text, int64_t *epoch_ms_out, int *utc_offset_minutes_out)
@@ -115,7 +117,7 @@ int parse_utc_offset_minutes (const char *offset_text, int *utc_offset_minutes_o
         if (!parse_fixed_digits (&cursor, 2, &minute))
             return 0;
 
-    if (hour > 23 || minute > 59)
+    if (minute > 59 || hour * 60 + minute > MAX_UTC_OFFSET_MINUTES)
         return 0;
 
     *utc_offset_minutes_out = sign * (hour * 60 + minute);
@@ -139,6 +141,9 @@ int format_epoch_ms_with_utc_offset (int64_t epoch_ms, int utc_offset_minutes, c
     char offset_sign = '+';
     int absolute_offset_minutes = utc_offset_minutes;
     char offset_text [8];
+
+    if (utc_offset_minutes < -MAX_UTC_OFFSET_MINUTES || utc_offset_minutes > MAX_UTC_OFFSET_MINUTES)
+        return 0;
 
     if (millisecond < 0) {
         millisecond += 1000;

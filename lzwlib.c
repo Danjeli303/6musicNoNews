@@ -345,7 +345,8 @@ int lzw_decompress (void (*dst)(int,void*), void *dstctx, int (*src)(void*), voi
 {
     unsigned int maxcode = FIRST_STRING, next_string = FIRST_STRING - 1, prefix = CLEAR_CODE;
     unsigned int dictionary_full = 0, max_available_code, total_codes;
-    unsigned int shifter = 0, bits = 0, read_byte, i;
+    unsigned int shifter = 0, bits = 0, i;
+    int read_byte;
     unsigned char *reverse_buffer, *referenced;
     decoder_entry_t *dictionary;
 
@@ -390,7 +391,7 @@ int lzw_decompress (void (*dst)(int,void*), void *dstctx, int (*src)(void*), voi
                 return 1;
             }
 
-            shifter |= read_byte << bits;
+            shifter |= (unsigned int) read_byte << bits;
         } while ((bits += 8) < code_bits);
 
         // first we assume the code will fit in the minimum number of required bits
@@ -409,7 +410,7 @@ int lzw_decompress (void (*dst)(int,void*), void *dstctx, int (*src)(void*), voi
                     return 1;
                 }
 
-                shifter = read_byte;
+                shifter = (unsigned int) read_byte;
                 bits = 8;
             }
 
