@@ -1,3 +1,6 @@
+#ifndef SKIPPER_H
+#define SKIPPER_H
+
 ////////////////////////////////////////////////////////////////////////////
 //                            **** SKIPPER ****                           //
 //                  Selective Audio Detection and Filter                  //
@@ -33,7 +36,7 @@ struct tensor_header {
     unsigned char dimensions [4];
 };
 
-static void analysis_result_to_tensor_index (const struct analysis_result *result, int *h, int *i, int *j, int *k)
+static inline void analysis_result_to_tensor_index (const struct analysis_result *result, int *h, int *i, int *j, int *k)
 {
     int h_index = result->range_dB >> 0;
     int i_index = result->cycles >> 1;
@@ -51,7 +54,7 @@ static void analysis_result_to_tensor_index (const struct analysis_result *resul
     *k = k_index;
 }
 
-static signed char *analysis_result_to_tensor_pointer (const struct analysis_result *result, tensor_array tensor)
+static inline signed char *analysis_result_to_tensor_pointer (const struct analysis_result *result, tensor_array tensor)
 {
     int h_index = result->range_dB >> 0;
     int i_index = result->cycles >> 1;
@@ -65,3 +68,5 @@ static signed char *analysis_result_to_tensor_pointer (const struct analysis_res
 
     return &tensor [h_index] [i_index] [j_index] [k_index];
 }
+
+#endif

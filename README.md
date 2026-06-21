@@ -1,6 +1,104 @@
-## SKIPPER
+## 6 Music News Skipper
 
-Selective Audio Detection and Filter
+The `.sh` files in this repository are convenience wrappers for BBC 6 Music
+news/talk removal workflows. They use `ffmpeg`, `ffprobe`, `ffplay`, `curl`,
+`make`, and the local `skipper` or `silencer` executables. Each script builds
+the executable it needs if it is missing.
+
+Run any script from a shell:
+
+```
+./script-name.sh --help
+./script-name.sh --check
+```
+
+`--check` is a smoke test. It verifies the required commands are installed,
+builds the relevant executable if needed, decodes a short amount of audio, and
+checks that the pipeline can run before starting a longer conversion or live
+stream.
+
+### Recorded programme scripts
+
+`skip_6music_news.sh` processes a recorded `.m4a` file through `skipper` and
+writes a new AAC `.m4a` file with detected talk/news skipped. It reads the
+programme start time from the input file's `date` metadata using `ffprobe`, so
+the recording must include that tag.
+
+```
+./skip_6music_news.sh --check input.m4a
+./skip_6music_news.sh input.m4a output_skipped_news.m4a
+```
+
+If no input is provided, the script uses the hard-coded Gilles Peterson iPlayer
+recording path in the script. If no output is provided, it writes beside this
+repository using the input filename plus `_skipped_news.m4a`. A matching `.log`
+file is written next to the output.
+
+`silence_6music_news.sh` has the same recorded-file interface, but it runs the
+`silencer` executable instead of `skipper`. Use it when you want the newer
+stream-time aware silencing path.
+
+```
+./silence_6music_news.sh --check input.m4a
+./silence_6music_news.sh input.m4a output_silenced_talk.m4a
+```
+
+### Live playback scripts
+
+`play_6music_silencer.sh` plays the live BBC 6 Music HLS stream through
+`silencer`, removes detected talk, and sends the resulting raw PCM audio to
+`ffplay` for local listening.
+
+```
+./play_6music_silencer.sh --check
+./play_6music_silencer.sh
+URL=https://example.com/stream.m3u8 ./play_6music_silencer.sh
+```
+
+The script reads `#EXT-X-PROGRAM-DATE-TIME` from the HLS playlist and uses the
+current Europe/London UTC offset so the silencer can align scheduled news
+windows with the station clock.
+
+`radio6music_noNews_fip.sh` plays live BBC 6 Music with detected talk removed
+and mixes in FIP during the silent gaps. FIP is sidechain-ducked by the BBC
+audio, so it fades down when 6 Music returns.
+
+```
+./radio6music_noNews_fip.sh --check
+./radio6music_noNews_fip.sh
+BBC_URL=https://example.com/bbc.m3u8 FIP_URL=https://example.com/fip.m3u8 ./radio6music_noNews_fip.sh
+```
+
+For an Icecast output, run it with `-AWS` and set the Icecast URL if the default
+does not match your server:
+
+```
+AWS_ICECAST_URL=icecast://source:password@host:8000/mount.mp3 ./radio6music_noNews_fip.sh -AWS
+```
+
+Optional environment variables include `FIP_VOLUME`, `DUCK_THRESHOLD`,
+`DUCK_RATIO`, `FIP_FADE_OUT_MS`, `FIP_FADE_IN_MS`, and `AWS_AUDIO_BITRATE`.
+
+`radio6music_noNews_fip_plex.sh` creates a rolling HLS playlist and `.ts`
+segments for Plex or another player that can read local HLS files. Keep it
+running while listening; it continuously refreshes the playlist.
+
+```
+./radio6music_noNews_fip_plex.sh --check
+./radio6music_noNews_fip_plex.sh
+OUT_DIR=/path/visible/to/plex ./radio6music_noNews_fip_plex.sh
+```
+
+By default it writes to `plex_radio6music_noNews_fip/` in this repository. The
+main playlist is `radio6music_noNews_fip_plex.m3u8`, and logs are written to
+`radio6music_noNews_fip_plex.log`. Useful tuning variables include `OUT_DIR`,
+`HLS_TIME`, `HLS_LIST_SIZE`, `BBC_URL`, `FIP_URL`, and the FIP ducking controls
+listed above.
+
+## About Skipper
+
+This project is based on David Bryant's original **Skipper** work, a selective
+audio detection and filter tool.
 
 Copyright (c) 2024 David Bryant.
 
@@ -8,93 +106,63 @@ All Rights Reserved.
 
 Distributed under the [BSD Software License](https://github.com/dbry/skipper/blob/main/LICENSE).
 
-## What is this then?
-
 **Skipper** is a simple machine-learning-trained audio filter that can
 differentiate between musical material and talking in audio streams
 and, optionally, filter out (i.e., skip) one or the other.
 
-I developed this because I enjoy listening to and archiving FM radio
-and Internet music program streams from local stations. These are great
-for discovering new music, learning about the local music scene, and listening
-to interviews with artists and others in the music community. I find that
-these programs provide a superior curation of music than any automated
-methods or "genre" streams I have listened to. One local station's
-catch phrase is "don't let the robots win", and I'm on board!
+The original project was developed for listening to and archiving FM radio and
+Internet music programme streams. These are useful for discovering new music,
+learning about a local music scene, and listening to interviews with artists and
+others in the music community. The difficulty is that replayed programmes can
+contain repeated or outdated dialogue, such as upcoming concert listings or
+finished pledge drives, and sometimes the dialogue is simply not wanted.
 
-The problem is that if I listen to these archived programs more than once
-the dialog starts to get repetitive and sometimes even irrelevent and
-outdated (e.g., upcoming concerts or long finished pledge drives). Also,
-there are times when the dialog is undesirable, such as when I'm using the
-stream as background music for intense exercise, or reading, or when I
-have guests over.
+By default, **Skipper** acts as a filter, consuming raw PCM audio, stereo or
+mono 16-bit, from `stdin` and writing it unchanged, except always stereo, to
+`stdout`. It detects music/talk transitions and reports those timestamps to
+`stderr`.
 
-For these situations I have even gone as far as editing particularly good
-archived streams and removing the dialog. Unfortunately this is somewhat
-time-consuming and not at all practical on a regular basis. However, when
-I did do this I noticed that I could fairly easily distinguish the music
-and dialog by just glancing at the waveforms, and have thought that this
-would be something that could be automated without too much difficulty
-(famous last words).
-
-Anyway, _that_ is what **Skipper** is. By default it simply acts as a filter,
-consuming raw PCM audio (stereo or mono, 16-bit) from `stdin` and writing it
-unchanged (except always stereo) to `stdout`. However, it will be detecting
-music/talk transitions and reporting those timestamps to `stderr`, and two
-options are provided for filtering based on that detection.
-
-Specifying `-t` will skip over the detected talk and pass only the music
-(with crossfades to smooth the transitions) and, conversely, `-m` will
-skip over the detected music and pass only the talking portions, which is
-handy to see how well (or poorly) **Skipper** is working, and might even
-be useful on its own.
+Specifying `-t` skips over detected talk and passes only music, with crossfades
+to smooth transitions. Conversely, `-m` skips over detected music and passes
+only the talking portions, which is useful for checking the detection quality.
 
 ## Caveats
 
-So, while it's pretty trivial to distinguish _most_ music and talk in
-audio streams, it's basically impossible to be 100% accurate. Why? Well consider
-the situation where the DJ is talking during and over the music. Depending
-on the relative levels, and what portion of the time the talking is occurring,
-this can essentially make the talk detection impossible. Or consider a cappella
-singing (which can range from operatic singing to essentially talking), or music
-that includes people actually talking (my brother used to like putting preachers
-in his songs). And some music genres simply have a very similar temporal acoustic
-profile to talk, and **Skipper** gets easily confused.
-
-Despite this, I find the program useful enough, and I have provided options for
-adjusting the detection threshold if it's getting too much talk or skipping too
-much music. And I'm working on improving the algorithm by creating a larger
-training corpus and more analysis functionality, so improvements will come...
+It is not possible to distinguish music and talk with 100% accuracy. Detection
+becomes difficult when a DJ talks over music, when music includes speech-like
+singing or spoken samples, or when a genre has a temporal acoustic profile that
+resembles speech. The command-line options allow threshold adjustment when too
+much talk is kept or too much music is skipped.
 
 ## Building
 
-I have provided a Makefile that should build the program on Linux and similar
-setups. I'll provide a Windows executable as well.
+The Makefile builds the programs on Linux and similar setups.
 
-Note that the executable `skipper` is the only one required. The other
-executables `tensor-gen` and `bin2c` are used, along with the `-a` option
-of `skipper` for generating tensor files from training audio data.
+The `skipper` executable is the core original filter. The `silencer` executable
+is used by the BBC 6 Music helper scripts in this branch. The `tensor-gen` and
+`bin2c` executables are used, along with the `-a` option of `skipper`, for
+generating tensor files from training audio data.
 
-## Usage
+## Skipper usage
 
-There are probably many ways to use **Skipper**, but I have been using it with
-[FFmpeg](https://www.ffmpeg.org/) as the source because it handles virtually every
-format and works well writing to pipes. The output of `FFmpeg` is piped directly to
-`skipper` and its output is then piped to an appropriate encoder like
-[lame](https://lame.sourceforge.io/):
+There are many ways to use **Skipper**, but a common approach is to use
+[FFmpeg](https://www.ffmpeg.org/) as the source because it handles many formats
+and works well with pipes. The output of `ffmpeg` can be piped directly to
+`skipper`, then to an encoder such as [lame](https://lame.sourceforge.io/):
 
-> ffmpeg -i sourcefile.ext -f s16le - | ./skipper -t | lame -r - music-only.mp3
+```
+ffmpeg -i sourcefile.ext -f s16le - | ./skipper -t | lame -r - music-only.mp3
+```
 
-Alternatively, it's also possible to pipe the output of `skipper` directly to
-[FFplay](https:www.ffmpeg.org/) for immediate playback. In this use case we use the
-`-k` option to add "keep-alive" crossfades during long skips so that the playback
-does not underrun.
+The output of `skipper` can also be piped directly to
+[FFplay](https://www.ffmpeg.org/) for immediate playback. In this case, `-k`
+adds keep-alive crossfades during long skips so playback does not underrun.
 
-> ffmpeg -i sourcefile.ext -f s16le - | ./skipper -tk | ffplay - -f s16le -ch_layout stereo
+```
+ffmpeg -i sourcefile.ext -f s16le - | ./skipper -tk | ffplay - -f s16le -ch_layout stereo
+```
 
-Currently **Skipper**'s functionality is only available as a command-line filter.
-I have plans to create a callable library as well to make it possible to more easily
-integrate into an existing application.
+Currently, **Skipper** is available as a command-line filter.
 
 ## Help
 

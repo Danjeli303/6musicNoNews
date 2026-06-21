@@ -19,8 +19,9 @@
 
 #include "4d-tensor.h"
 #include "skipper.h"
-#include "lzwlib.h"
 #include "biquad.h"
+#include "skipper_time.h"
+#include "skipper_tensor.h"
 
 #define VERSION         0.1
 
@@ -64,7 +65,10 @@ static const char *usage =
 "           -s<n>            = override default sample rate of 44.1 kHz\n"
 "           -t[<n>]          = skip over talk, with optional threshold offset\n"
 "                            = (raise or lower talk threshold +/- 99 points)\n"
-"           -v[<n>]          = set verbosity + [rate in seconds]\n\n"
+"           -T <iso-time>    = stream start time (e.g. HLS PROGRAM-DATE-TIME)\n"
+"           -v[<n>]          = set verbosity + [rate in seconds]\n"
+"           -x               = with -t, restricts talk skipping to -2/+5 min around hour/half-hour\n"
+"           -z<+/-HH:MM>     = UTC offset for stream time checks (e.g. +01:00)\n\n"
 " Web:      Visit www.github.com/dbry/skipper for latest version and info\n\n";
 
 #define CHANNELS        2       // default, overridable
@@ -90,9 +94,9 @@ static const char *usage =
 static void fade_out (int16_t *samples, int num_samples, int stride);
 static void fade_in (int16_t *samples, int num_samples, int stride);
 
-static int read_tensor_file (tensor_array tensor, char *filename);
-static int local_tensor_file (tensor_array tensor, unsigned char *compressed_tensor, int compressed_size);
 static int analyze_window (float *levels, long sample_index, int num_samples, int sample_rate);
+static int is_time_restricted_skip_active (int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate);
+static int should_skip_mode_at_time (int skip_mode, int mode, int time_restricted_skip_enabled, int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate);
 static void display_histogram (const char *name, int *histogram, int count);
 static void display_analysis_results (void);
 
@@ -103,6 +107,31 @@ static int verbose, quiet;
 #define MINS(s,r) ((int)((s)/((r)*60)))
 #define SECS(s,r) ((int)(((s)/(r))%60))
 
+static int is_time_restricted_skip_active (int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate)
+{
+    return is_time_restricted_window_active (stream_time_enabled, stream_start_epoch_ms,
+                                             stream_time_utc_offset_minutes, sample_index,
+                                             sample_rate);
+}
+
+static int should_skip_mode_at_time (int skip_mode, int mode, int time_restricted_skip_enabled, int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate)
+{
+    if (skip_mode == SKIP_EVERYTHING)
+        return 1;
+
+    if (skip_mode == SKIP_MUSIC)
+        return mode == MODE_MUSIC;
+
+    if (skip_mode == SKIP_TALK && mode == MODE_TALK) {
+        if (time_restricted_skip_enabled && !is_time_restricted_skip_active (stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, sample_index, sample_rate))
+            return 0;
+
+        return 1;
+    }
+
+    return 0;
+}
+
 int main (int argc, char **argv)
 {
     int channels = CHANNELS, sample_rate = SAMPLE_RATE, keepalive = 0;
@@ -110,8 +139,11 @@ int main (int argc, char **argv)
     int level_buffer_index = 0, output_buffer_index = 0, num_windows = 0, step_samples;
     int level_buff_len, output_buff_len, crossfade_buff_len, ring_buff_len, results_buffer_count = 0;
     int music_hits = 0, talk_hits = 0, analysis_output_file_follows = 0, tensor_input_file_follows = 0;
+    int stream_start_time_follows = 0, stream_time_utc_offset_follows = 0, time_restricted_skip_enabled = 0;
+    int stream_time_enabled = 0, stream_time_utc_offset_minutes = 0, stream_time_utc_offset_is_set = 0;
     int current_mode = 0, music_up_counter = 0, talk_up_counter = 0, pend_up_counter = 0, input_samples;
     int64_t num_samples = 0, transition_sample = 0, confirmed_sample = 0, samples_discarded = 0, samples_written = 0;
+    int64_t stream_start_epoch_ms = 0;
     char *analysis_output_filename = NULL, *tensor_input_filename = NULL;
     int16_t *input_buffer, *output_buffer, *crossfade_buffer;
     double full_scale_rms = 32768.0 * 32767.0 * 0.5;
@@ -225,7 +257,29 @@ int main (int argc, char **argv)
                         --*argv;
                         break;
 
-                    case 'T': case 't':
+                    case 'T': {
+                        int parsed_utc_offset_minutes;
+
+                        if ((*argv) [1]) {
+                            if (!parse_iso8601_timestamp_ms (*argv + 1, &stream_start_epoch_ms, &parsed_utc_offset_minutes)) {
+                                fprintf (stderr, "\nerror: invalid stream start time specified with -T\n");
+                                return -1;
+                            }
+
+                            stream_time_enabled = 1;
+
+                            if (!stream_time_utc_offset_is_set)
+                                stream_time_utc_offset_minutes = parsed_utc_offset_minutes;
+
+                            *argv += strlen (*argv) - 1;
+                        }
+                        else
+                            stream_start_time_follows = 1;
+
+                        break;
+                    }
+
+                    case 't':
                         if (isdigit (*++*argv) || **argv == '-')
                             threshold = -strtol (*argv, argv, 10);
 
@@ -247,6 +301,25 @@ int main (int argc, char **argv)
                         --*argv;
                         break;
 
+                    case 'X': case 'x':
+                        time_restricted_skip_enabled = 1;
+                        break;
+
+                    case 'Z': case 'z':
+                        if ((*argv) [1]) {
+                            if (!parse_utc_offset_minutes (*argv + 1, &stream_time_utc_offset_minutes, NULL)) {
+                                fprintf (stderr, "\nerror: invalid UTC offset specified with -z\n");
+                                return -1;
+                            }
+
+                            stream_time_utc_offset_is_set = 1;
+                            *argv += strlen (*argv) - 1;
+                        }
+                        else
+                            stream_time_utc_offset_follows = 1;
+
+                        break;
+
                     default:
                         fprintf (stderr, "\nillegal option: %c !\n", **argv);
                         return 1;
@@ -259,10 +332,54 @@ int main (int argc, char **argv)
             tensor_input_filename = *argv;
             tensor_input_file_follows = 0;
         }
+        else if (stream_start_time_follows) {
+            int parsed_utc_offset_minutes;
+
+            if (!parse_iso8601_timestamp_ms (*argv, &stream_start_epoch_ms, &parsed_utc_offset_minutes)) {
+                fprintf (stderr, "\nerror: invalid stream start time specified with -T\n");
+                return -1;
+            }
+
+            stream_time_enabled = 1;
+
+            if (!stream_time_utc_offset_is_set)
+                stream_time_utc_offset_minutes = parsed_utc_offset_minutes;
+
+            stream_start_time_follows = 0;
+        }
+        else if (stream_time_utc_offset_follows) {
+            if (!parse_utc_offset_minutes (*argv, &stream_time_utc_offset_minutes, NULL)) {
+                fprintf (stderr, "\nerror: invalid UTC offset specified with -z\n");
+                return -1;
+            }
+
+            stream_time_utc_offset_is_set = 1;
+            stream_time_utc_offset_follows = 0;
+        }
         else {
             fprintf (stderr, "\nextra unknown argument: %s !\n", *argv);
             return 1;
         }
+    }
+
+    if (analysis_output_file_follows) {
+        fprintf (stderr, "\nerror: -a requires an output filename\n");
+        return 1;
+    }
+
+    if (tensor_input_file_follows) {
+        fprintf (stderr, "\nerror: -d requires a tensor filename\n");
+        return 1;
+    }
+
+    if (stream_start_time_follows) {
+        fprintf (stderr, "\nerror: -T requires an ISO-8601 stream start time\n");
+        return 1;
+    }
+
+    if (stream_time_utc_offset_follows) {
+        fprintf (stderr, "\nerror: -z requires a UTC offset like +01:00\n");
+        return 1;
     }
 
     if (tensor_input_filename ? !read_tensor_file (tensor, tensor_input_filename) : !local_tensor_file (tensor, tensor_4d, sizeof (tensor_4d))) {
@@ -471,8 +588,15 @@ int main (int argc, char **argv)
                         if (skip_mode == SKIP_MUSIC || skip_mode == SKIP_TALK) {
                             int audio_offset = transition_sample - num_samples + output_buffer_index;
                             int crossfade_start = audio_offset - crossfade_buff_len / 2;
+                            int current_output_skipped = should_skip_mode_at_time (skip_mode, current_mode, time_restricted_skip_enabled,
+                                stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, transition_sample, sample_rate);
+                            int detected_output_skipped = should_skip_mode_at_time (skip_mode, detected_mode, time_restricted_skip_enabled,
+                                stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, transition_sample, sample_rate);
 
-                            if (skip_mode == (detected_mode == MODE_MUSIC ? SKIP_MUSIC : SKIP_TALK)) {
+                            if (current_output_skipped == detected_output_skipped) {
+                                // The classification changed, but the output stays either fully passed or fully skipped.
+                            }
+                            else if (detected_output_skipped) {
                                 if (crossfade_start >= 0) {
                                     fwrite (output_buffer, sizeof (int16_t) * 2, crossfade_start, stdout);
                                     samples_written += crossfade_start;
@@ -542,7 +666,11 @@ int main (int argc, char **argv)
 
             if (output_buffer_index == output_buff_len || available_samples >= sample_rate * 60) {
 
-                if (keepalive && available_samples > crossfade_buff_len * 2 && skip_mode == (current_mode == MODE_MUSIC ? SKIP_MUSIC : SKIP_TALK)) {
+                int64_t available_start_sample = num_samples - output_buffer_index;
+                int current_mode_skipped = should_skip_mode_at_time (skip_mode, current_mode, time_restricted_skip_enabled,
+                    stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, available_start_sample, sample_rate);
+
+                if (keepalive && available_samples > crossfade_buff_len * 2 && current_mode_skipped) {
                     int crossfade_start = available_samples / 2 - crossfade_buff_len;
                     int16_t *crossfade_ptr = output_buffer + crossfade_start * 2;
 
@@ -576,7 +704,7 @@ int main (int argc, char **argv)
                             SECS (samples_written - crossfade_buff_len / 2, sample_rate));
                 }
                 else if (available_samples > 0) {
-                    int write_data = skip_mode == SKIP_NOTHING || skip_mode == (current_mode == MODE_MUSIC ? SKIP_TALK : SKIP_MUSIC);
+                    int write_data = !current_mode_skipped;
 
                     if (write_data) {
                         fwrite (output_buffer, sizeof (int16_t) * 2, available_samples, stdout);
@@ -602,7 +730,9 @@ int main (int argc, char **argv)
     }
 
     if (output_buffer_index) {
-        int write_data = skip_mode == SKIP_NOTHING || skip_mode == (current_mode == MODE_MUSIC ? SKIP_TALK : SKIP_MUSIC);
+        int64_t output_start_sample = num_samples - output_buffer_index;
+        int write_data = !should_skip_mode_at_time (skip_mode, current_mode, time_restricted_skip_enabled,
+            stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, output_start_sample, sample_rate);
 
         if (write_data) {
             fwrite (output_buffer, sizeof (int16_t) * 2, output_buffer_index, stdout);
@@ -900,106 +1030,4 @@ static void display_population (int *histogram, int count, int percent)
 
         fprintf (stderr, "    %d (%.1f%%): %d to %d\n", sum2, sum2 * 100.0 / sum, low_value, high_value);
     }
-}
-
-static int read_tensor_file (tensor_array tensor, char *filename)
-{
-    int num_bytes = 0, alloced_bytes = 0, res, ch;
-    FILE *tensor_file = fopen (filename, "rb");
-    unsigned char *buffer = NULL;
-
-    if (!tensor_file) {
-        fprintf (stderr, "\nerror: can't open \"%s\" for reading!\n", filename);
-        return 0;
-    }
-
-    while ((ch = getc (tensor_file)) != EOF) {
-        if (num_bytes == alloced_bytes)
-            buffer = realloc (buffer, alloced_bytes += 65536);
-
-        buffer [num_bytes++] = ch;
-    }
-
-    fclose (tensor_file);
-    res = local_tensor_file (tensor, buffer, num_bytes);
-    free (buffer);
-
-    return res;
-}
-
-typedef struct {
-    unsigned int size, index, wrapped;
-    unsigned char *buffer;
-} streamer;
-
-static int read_buff (void *ctx)
-{
-    streamer *stream = ctx;
-
-    if (stream->index == stream->size)
-        return EOF;
-
-    return stream->buffer [stream->index++];
-}
-
-static void write_buff (int value, void *ctx)
-{
-    streamer *stream = ctx;
-
-    if (stream->index == stream->size) {
-        stream->index = 0;
-        stream->wrapped++;
-    }
-
-    stream->buffer [stream->index++] = value;
-}
-
-static int local_tensor_file (tensor_array tensor, unsigned char *compressed_tensor, int compressed_size)
-{
-    unsigned char dimensions [4] = { ARRAY_BINS_1, ARRAY_BINS_2, ARRAY_BINS_3, ARRAY_BINS_4 };
-    struct tensor_header header;
-    streamer reader, writer;
-
-    if (compressed_size < sizeof (header)) {
-        fprintf (stderr, "invalid tensor!\n");
-        return 0;
-    }
-
-    memcpy (&header, compressed_tensor, sizeof (header));
-    compressed_tensor += sizeof (header);
-    compressed_size -= sizeof (header);
-
-    if (memcmp (header.dimensions, dimensions, sizeof (dimensions)) || header.version != TENSOR_VERSION) {
-        fprintf (stderr, "invalid tensor!\n");
-        return 0;
-    }
-
-    memset (&reader, 0, sizeof (reader));
-    memset (&writer, 0, sizeof (writer));
-
-    reader.buffer = compressed_tensor;
-    reader.size = compressed_size;
-
-    writer.buffer = (unsigned char *) tensor;
-    writer.size = sizeof (tensor_array);
-
-    if (lzw_decompress (write_buff, &writer, read_buff, &reader)) {
-        fprintf (stderr, "lzw_decompress() returned error!\n");
-        return 0;
-    }
-
-    if (reader.index != reader.size || writer.index != writer.size || reader.wrapped || writer.wrapped) {
-        fprintf (stderr, "other error in decompressing tensor!\n");
-        return 0;
-    }
-
-    for (int i = 0; i < sizeof (tensor_array); ++i)
-        header.checksum -= ((unsigned char *) tensor) [i];
-
-    if (header.checksum) {
-        fprintf (stderr, "checksum error in decompressed tensor!\n");
-        return 0;
-    }
-
-    return 1;
 }
