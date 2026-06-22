@@ -1,7 +1,7 @@
 {
   "interactionModel": {
     "languageModel": {
-      "invocationName": "the radio",
+      "invocationName": "six music skipper",
       "intents": [
         {
           "name": "PlayRadioIntent",

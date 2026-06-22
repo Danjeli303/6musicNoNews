@@ -3,13 +3,13 @@
     "publishingInformation": {
       "locales": {
         "en-GB": {
-          "name": "The Radio",
+          "name": "Six Music Skipper",
           "summary": "Play the live 6 Music news skipper stream.",
           "description": "Plays the live 6 Music news skipper stream.",
           "examplePhrases": [
-            "Alexa, open The Radio",
-            "Alexa, ask The Radio to play",
-            "Alexa, tell The Radio to start"
+            "Alexa, open Six Music Skipper",
+            "Alexa, ask Six Music Skipper to play",
+            "Alexa, tell Six Music Skipper to start"
           ],
           "keywords": [
             "radio",
