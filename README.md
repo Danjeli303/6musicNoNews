@@ -73,11 +73,25 @@ For an Icecast output, run it with `-AWS` and set the Icecast URL if the default
 does not match your server:
 
 ```
+ICECAST_SOURCE_PASSWORD=password ./radio6music_noNews_fip.sh -AWS
 AWS_ICECAST_URL=icecast://source:password@host:8000/mount.mp3 ./radio6music_noNews_fip.sh -AWS
 ```
 
 Optional environment variables include `FIP_VOLUME`, `DUCK_THRESHOLD`,
 `DUCK_RATIO`, `FIP_FADE_OUT_MS`, `FIP_FADE_IN_MS`, and `AWS_AUDIO_BITRATE`.
+
+### AWS deployment
+
+This branch includes a Docker Compose deployment for EC2. It runs the stream
+pipeline, Icecast, and Caddy HTTPS proxy. The Alexa-ready stream URL is:
+
+```
+https://PUBLIC_HOST/the-radio.mp3
+```
+
+For first AWS testing, `PUBLIC_HOST` can be an `sslip.io` hostname such as
+`203.0.113.10.sslip.io`. See `docs/aws-deploy.md` for the full runbook and
+`alexa-skill/README.md` for the minimal Alexa skill scaffold.
 
 `radio6music_noNews_fip_plex.sh` creates a rolling HLS playlist and `.ts`
 segments for Plex or another player that can read local HLS files. Keep it

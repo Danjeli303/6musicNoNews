@@ -14,13 +14,17 @@ DUCK_THRESHOLD="${DUCK_THRESHOLD:-0.002}"
 DUCK_RATIO="${DUCK_RATIO:-20}"
 FIP_FADE_OUT_MS="${FIP_FADE_OUT_MS:-700}"
 FIP_FADE_IN_MS="${FIP_FADE_IN_MS:-1800}"
-AWS_ICECAST_URL="${AWS_ICECAST_URL:-icecast://source:hackme@icecast:8000/the-radio.mp3}"
 AWS_AUDIO_BITRATE="${AWS_AUDIO_BITRATE:-128k}"
+AWS_ICECAST_URL="${AWS_ICECAST_URL:-}"
+AWS_ICECAST_HOST="${AWS_ICECAST_HOST:-icecast}"
+AWS_ICECAST_PORT="${AWS_ICECAST_PORT:-8000}"
+AWS_ICECAST_USER="${AWS_ICECAST_USER:-source}"
+AWS_ICECAST_MOUNT="${AWS_ICECAST_MOUNT:-the-radio.mp3}"
 
 usage() {
     printf 'Usage: %s [--check|-AWS]\n' "$0"
     printf 'Set BBC_URL=... or FIP_URL=... to override either stream.\n'
-    printf 'With -AWS, set AWS_ICECAST_URL=icecast://source:password@host:8000/mount.mp3 if needed.\n'
+    printf 'With -AWS, set ICECAST_SOURCE_PASSWORD=... or AWS_ICECAST_URL=icecast://source:password@host:8000/mount.mp3.\n'
 }
 
 require_command() {
@@ -32,6 +36,7 @@ require_command() {
 
 ensure_silencer() {
     if [ ! -x "$SILENCER" ]; then
+        require_command make
         make -C "$SCRIPT_DIR" silencer
     fi
 
@@ -62,6 +67,32 @@ mix_with_fip_filter() {
     printf '[1:a]aresample=%s,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=%s[fip];' "$SAMPLE_RATE" "$FIP_VOLUME"
     printf '[fip][sc]sidechaincompress=threshold=%s:ratio=%s:attack=%s:release=%s:makeup=1:link=maximum:detection=rms[fipduck];' "$DUCK_THRESHOLD" "$DUCK_RATIO" "$FIP_FADE_OUT_MS" "$FIP_FADE_IN_MS"
     printf '[bbc][fipduck]amix=inputs=2:duration=first:normalize=0:dropout_transition=0,alimiter=limit=0.95[out]'
+}
+
+build_aws_icecast_url() {
+    mount="${AWS_ICECAST_MOUNT#/}"
+
+    if [ -n "$AWS_ICECAST_URL" ]; then
+        printf '%s\n' "$AWS_ICECAST_URL"
+        return 0
+    fi
+
+    if [ -z "${ICECAST_SOURCE_PASSWORD:-}" ]; then
+        printf 'Error: -AWS requires ICECAST_SOURCE_PASSWORD or AWS_ICECAST_URL.\n' >&2
+        printf 'Example: ICECAST_SOURCE_PASSWORD=change-me %s -AWS\n' "$0" >&2
+        exit 1
+    fi
+
+    if [ -z "$mount" ]; then
+        printf 'Error: AWS_ICECAST_MOUNT must not be empty.\n' >&2
+        exit 1
+    fi
+
+    printf 'icecast://%s:%s@%s:%s/%s\n' "$AWS_ICECAST_USER" "$ICECAST_SOURCE_PASSWORD" "$AWS_ICECAST_HOST" "$AWS_ICECAST_PORT" "$mount"
+}
+
+redact_url_password() {
+    printf '%s\n' "$1" | sed 's#//\([^:/@]*\):[^@]*@#//\1:***@#'
 }
 
 run_check() {
@@ -121,9 +152,11 @@ require_command ffmpeg
 if [ "$AWS_MODE" -eq 0 ]; then
     require_command ffplay
 fi
-require_command make
 ensure_silencer
 
+if [ "$AWS_MODE" -eq 1 ]; then
+    AWS_ICECAST_URL=$(build_aws_icecast_url)
+fi
 START_TIME=$(get_stream_start_time)
 LONDON_UTC_OFFSET=$(get_london_utc_offset)
 
@@ -137,7 +170,7 @@ printf 'FIP: %s\n' "$FIP_URL" >&2
 printf 'BBC stream timestamp: %s\n' "$START_TIME" >&2
 printf 'London UTC offset: %s\n' "$LONDON_UTC_OFFSET" >&2
 if [ "$AWS_MODE" -eq 1 ]; then
-    printf 'AWS Icecast output: %s\n' "$AWS_ICECAST_URL" >&2
+    printf 'AWS Icecast output: %s\n' "$(redact_url_password "$AWS_ICECAST_URL")" >&2
     printf 'AWS audio bitrate: %s\n' "$AWS_AUDIO_BITRATE" >&2
 fi
 

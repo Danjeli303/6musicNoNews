@@ -1,0 +1,54 @@
+services:
+  streamer:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      - icecast
+    environment:
+      BBC_URL: ${BBC_URL:-http://as-hls-ww-live.akamaized.net/pool_81827798/live/ww/bbc_6music/bbc_6music.isml/bbc_6music-audio%3d320000.norewind.m3u8}
+      FIP_URL: ${FIP_URL:-https://stream.radiofrance.fr/fip/fip_hifi.m3u8?id=radiofrance}
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?Set ICECAST_SOURCE_PASSWORD in .env}
+      AWS_ICECAST_HOST: icecast
+      AWS_ICECAST_PORT: 8000
+      AWS_ICECAST_MOUNT: the-radio.mp3
+      AWS_AUDIO_BITRATE: ${AWS_AUDIO_BITRATE:-128k}
+      FIP_VOLUME: ${FIP_VOLUME:-0.85}
+      DUCK_THRESHOLD: ${DUCK_THRESHOLD:-0.002}
+      DUCK_RATIO: ${DUCK_RATIO:-20}
+      FIP_FADE_OUT_MS: ${FIP_FADE_OUT_MS:-700}
+      FIP_FADE_IN_MS: ${FIP_FADE_IN_MS:-1800}
+
+  icecast:
+    build:
+      context: .
+      dockerfile: docker/icecast/Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?Set ICECAST_SOURCE_PASSWORD in .env}
+      ICECAST_RELAY_PASSWORD: ${ICECAST_RELAY_PASSWORD:?Set ICECAST_RELAY_PASSWORD in .env}
+      ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:?Set ICECAST_ADMIN_PASSWORD in .env}
+      ICECAST_ADMIN_EMAIL: ${ICECAST_ADMIN_EMAIL:-admin@example.com}
+      ICECAST_HOSTNAME: ${PUBLIC_HOST:?Set PUBLIC_HOST in .env}
+      ICECAST_LOCATION: ${ICECAST_LOCATION:-AWS}
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - icecast
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?Set PUBLIC_HOST in .env}
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

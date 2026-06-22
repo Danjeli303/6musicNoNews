@@ -1,0 +1,15 @@
+.DS_Store
+.env
+
+*.log
+*.m4a
+*.pcm
+*.tmp
+
+/bin2c
+/silencer
+/silencer_tests
+/skipper
+/skipper_tests
+/tensor-gen
+/plex_radio6music_noNews_fip/
