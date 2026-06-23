@@ -134,6 +134,8 @@ The encoder reads the silencer output at realtime speed so Icecast receives
 steady audio rather than one-second PCM bursts.
 Set `AWS_RESTART_DELAY_SECONDS` in `.env` if you want a longer or shorter pause
 between restart attempts.
+Icecast sends a one-minute startup burst at the default `AWS_AUDIO_BITRATE` so
+Alexa can begin with more playback cushion.
 
 ## 5. Smoke Tests
 
