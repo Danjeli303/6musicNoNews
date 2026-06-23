@@ -7,11 +7,11 @@ set -eu
 : "${ICECAST_ADMIN_EMAIL:=admin@example.com}"
 : "${ICECAST_HOSTNAME:=localhost}"
 : "${ICECAST_LOCATION:=AWS}"
-: "${ICECAST_QUEUE_SIZE:=8388608}"
+: "${ICECAST_QUEUE_SIZE:=67108864}"
 : "${ICECAST_CLIENT_TIMEOUT:=60}"
 : "${ICECAST_HEADER_TIMEOUT:=30}"
 : "${ICECAST_SOURCE_TIMEOUT:=180}"
-: "${ICECAST_BURST_SIZE:=1048576}"
+: "${ICECAST_BURST_SIZE:=8388608}"
 
 escape_sed() {
     printf '%s' "$1" | sed 's/[&|]/\\&/g'

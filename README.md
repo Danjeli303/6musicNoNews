@@ -87,8 +87,8 @@ source or Icecast connection failure. The final mix is timestamp-smoothed before
 MP3 encoding to reduce short player underruns during long streams.
 `AWS_RESTART_DELAY_SECONDS` controls the pause between restart attempts.
 
-The Docker Icecast service defaults to a larger listener buffer for smart
-speakers: `ICECAST_QUEUE_SIZE=8388608`, `ICECAST_BURST_SIZE=1048576`,
+The Docker Icecast service defaults to a large listener buffer for smart
+speakers: `ICECAST_QUEUE_SIZE=67108864`, `ICECAST_BURST_SIZE=8388608`,
 `ICECAST_CLIENT_TIMEOUT=60`, `ICECAST_HEADER_TIMEOUT=30`, and
 `ICECAST_SOURCE_TIMEOUT=180`.
 

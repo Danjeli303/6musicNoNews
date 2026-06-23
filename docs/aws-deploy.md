@@ -133,8 +133,8 @@ underruns during long streams.
 Set `AWS_RESTART_DELAY_SECONDS` in `.env` if you want a longer or shorter pause
 between restart attempts.
 
-Icecast is configured for more buffering headroom than its package defaults:
-`ICECAST_QUEUE_SIZE=8388608`, `ICECAST_BURST_SIZE=1048576`,
+Icecast is configured for much more buffering headroom than its package defaults:
+`ICECAST_QUEUE_SIZE=67108864`, `ICECAST_BURST_SIZE=8388608`,
 `ICECAST_CLIENT_TIMEOUT=60`, `ICECAST_HEADER_TIMEOUT=30`, and
 `ICECAST_SOURCE_TIMEOUT=180`. Increase `ICECAST_BURST_SIZE` or
 `ICECAST_QUEUE_SIZE` in `.env` if Alexa still underruns.
