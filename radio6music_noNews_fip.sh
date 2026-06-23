@@ -120,6 +120,7 @@ run_check() {
     ffmpeg \
       -hide_banner \
       -loglevel warning \
+      -re \
       -f s16le -ar "$SAMPLE_RATE" -ac 2 -i pipe:0 \
       $(ffmpeg_live_input_args) \
       -i "$FIP_URL" \
@@ -144,6 +145,7 @@ run_aws_pipeline_once() {
     ffmpeg \
       -hide_banner \
       -loglevel warning \
+      -re \
       -f s16le -ar "$SAMPLE_RATE" -ac 2 -i pipe:0 \
       $(ffmpeg_live_input_args) \
       -i "$FIP_URL" \
@@ -242,6 +244,7 @@ else
     ffmpeg \
       -hide_banner \
       -loglevel warning \
+      -re \
       -f s16le -ar "$SAMPLE_RATE" -ac 2 -i pipe:0 \
       $(ffmpeg_live_input_args) \
       -i "$FIP_URL" \

@@ -130,6 +130,8 @@ settings for the BBC and FIP inputs, and if the pipeline still exits after a
 long-running interruption, it refreshes the BBC stream timestamp and restarts.
 The final mix is timestamp-smoothed before MP3 encoding to reduce short player
 underruns during long streams.
+The encoder reads the silencer output at realtime speed so Icecast receives
+steady audio rather than one-second PCM bursts.
 Set `AWS_RESTART_DELAY_SECONDS` in `.env` if you want a longer or shorter pause
 between restart attempts.
 

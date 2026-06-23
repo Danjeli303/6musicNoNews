@@ -85,6 +85,8 @@ The Icecast/Alexa MP3 output is stereo. In AWS mode, the script uses more
 patient FFmpeg reconnect settings and restarts the stream pipeline after a
 source or Icecast connection failure. The final mix is timestamp-smoothed before
 MP3 encoding to reduce short player underruns during long streams.
+The encoder reads the silencer output at realtime speed so Icecast receives
+steady audio rather than one-second PCM bursts.
 `AWS_RESTART_DELAY_SECONDS` controls the pause between restart attempts.
 
 The Docker Icecast service defaults to a large listener buffer for smart
