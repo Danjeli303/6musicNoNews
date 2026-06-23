@@ -6,12 +6,12 @@
     <limits>
         <clients>100</clients>
         <sources>2</sources>
-        <queue-size>1048576</queue-size>
-        <client-timeout>30</client-timeout>
-        <header-timeout>15</header-timeout>
-        <source-timeout>120</source-timeout>
+        <queue-size>__ICECAST_QUEUE_SIZE__</queue-size>
+        <client-timeout>__ICECAST_CLIENT_TIMEOUT__</client-timeout>
+        <header-timeout>__ICECAST_HEADER_TIMEOUT__</header-timeout>
+        <source-timeout>__ICECAST_SOURCE_TIMEOUT__</source-timeout>
         <burst-on-connect>1</burst-on-connect>
-        <burst-size>262144</burst-size>
+        <burst-size>__ICECAST_BURST_SIZE__</burst-size>
     </limits>
 
     <authentication>
