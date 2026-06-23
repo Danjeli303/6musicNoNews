@@ -83,8 +83,9 @@ Optional environment variables include `FIP_VOLUME`, `DUCK_THRESHOLD`,
 
 The Icecast/Alexa MP3 output is stereo. In AWS mode, the script uses more
 patient FFmpeg reconnect settings and restarts the stream pipeline after a
-source or Icecast connection failure. `AWS_RESTART_DELAY_SECONDS` controls the
-pause between restart attempts.
+source or Icecast connection failure. The final mix is timestamp-smoothed before
+MP3 encoding to reduce short player underruns during long streams.
+`AWS_RESTART_DELAY_SECONDS` controls the pause between restart attempts.
 
 ### AWS deployment
 

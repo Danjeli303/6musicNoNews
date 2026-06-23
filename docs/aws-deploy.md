@@ -128,6 +128,8 @@ https://203.0.113.10.sslip.io/the-radio.mp3
 The deployed MP3 stream is stereo. The streamer uses FFmpeg reconnect
 settings for the BBC and FIP inputs, and if the pipeline still exits after a
 long-running interruption, it refreshes the BBC stream timestamp and restarts.
+The final mix is timestamp-smoothed before MP3 encoding to reduce short player
+underruns during long streams.
 Set `AWS_RESTART_DELAY_SECONDS` in `.env` if you want a longer or shorter pause
 between restart attempts.
 
