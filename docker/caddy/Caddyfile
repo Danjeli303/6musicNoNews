@@ -1,4 +1,6 @@
 {$PUBLIC_HOST} {
-    reverse_proxy /the-radio.mp3 icecast:8000
+    reverse_proxy /the-radio.mp3 icecast:8000 {
+        flush_interval -1
+    }
     respond /healthz "ok" 200
 }

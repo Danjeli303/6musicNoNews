@@ -78,7 +78,13 @@ AWS_ICECAST_URL=icecast://source:password@host:8000/mount.mp3 ./radio6music_noNe
 ```
 
 Optional environment variables include `FIP_VOLUME`, `DUCK_THRESHOLD`,
-`DUCK_RATIO`, `FIP_FADE_OUT_MS`, `FIP_FADE_IN_MS`, and `AWS_AUDIO_BITRATE`.
+`DUCK_RATIO`, `FIP_FADE_OUT_MS`, `FIP_FADE_IN_MS`, `AWS_AUDIO_BITRATE`, and
+`AWS_RESTART_DELAY_SECONDS`.
+
+The Icecast/Alexa MP3 output is stereo. In AWS mode, the script uses more
+patient FFmpeg reconnect settings and restarts the stream pipeline after a
+source or Icecast connection failure. `AWS_RESTART_DELAY_SECONDS` controls the
+pause between restart attempts.
 
 ### AWS deployment
 

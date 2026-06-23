@@ -125,6 +125,12 @@ For example:
 https://203.0.113.10.sslip.io/the-radio.mp3
 ```
 
+The deployed MP3 stream is stereo. The streamer uses FFmpeg reconnect
+settings for the BBC and FIP inputs, and if the pipeline still exits after a
+long-running interruption, it refreshes the BBC stream timestamp and restarts.
+Set `AWS_RESTART_DELAY_SECONDS` in `.env` if you want a longer or shorter pause
+between restart attempts.
+
 ## 5. Smoke Tests
 
 From your laptop or the EC2 instance:
