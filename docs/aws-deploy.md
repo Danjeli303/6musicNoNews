@@ -1,16 +1,25 @@
 # AWS EC2 Docker Deployment
 
-This deployment runs three containers on one EC2 instance:
+This deployment runs four containers on one EC2 instance:
 
 - `streamer`: runs `./radio6music_noNews_fip.sh -AWS`
+- `hls-streamer`: writes a rolling AAC/HLS playlist and segments
 - `icecast`: receives the MP3 stream privately on the Docker network
-- `caddy`: exposes `https://PUBLIC_HOST/the-radio.mp3` on ports `80` and `443`
+- `caddy`: exposes `https://PUBLIC_HOST/the-radio.mp3` and
+  `https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8` on ports `80` and
+  `443`
 
 Alexa needs an HTTPS stream URL on port `443` with a trusted certificate. For
 first testing, use `sslip.io` DNS:
 
 ```
 https://EC2_PUBLIC_IP.sslip.io/the-radio.mp3
+```
+
+The HLS test URL is:
+
+```
+https://EC2_PUBLIC_IP.sslip.io/hls/radio6music_noNews_fip_plex.m3u8
 ```
 
 Replace `EC2_PUBLIC_IP` with the instance public IPv4 address.
@@ -110,13 +119,19 @@ docker compose up -d --build
 Watch startup:
 
 ```
-docker compose logs -f streamer
+docker compose logs -f streamer hls-streamer
 ```
 
 The public stream URL is:
 
 ```
 https://PUBLIC_HOST/the-radio.mp3
+```
+
+The public HLS test URL is:
+
+```
+https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8
 ```
 
 For example:
@@ -137,18 +152,24 @@ between restart attempts.
 Icecast sends a one-minute startup burst at the default `AWS_AUDIO_BITRATE` so
 Alexa can begin with more playback cushion.
 
+The HLS stream uses AAC segments with `HLS_AUDIO_BITRATE=128k`,
+`HLS_TIME=6`, and `HLS_LIST_SIZE=20` by default. It is served directly by Caddy
+from the shared `hls_data` volume.
+
 ## 5. Smoke Tests
 
 From your laptop or the EC2 instance:
 
 ```
 curl -I https://PUBLIC_HOST/the-radio.mp3
+curl -I https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8
 ```
 
 For audio validation, use the `ffprobe` installed inside the streamer image:
 
 ```
 docker compose exec streamer ffprobe https://PUBLIC_HOST/the-radio.mp3
+docker compose exec hls-streamer ffprobe https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8
 ```
 
 You can also paste the URL into VLC or a browser.
@@ -166,6 +187,12 @@ Use the stream URL as the Alexa Lambda `STREAM_URL`:
 
 ```
 STREAM_URL=https://PUBLIC_HOST/the-radio.mp3
+```
+
+For HLS testing, use:
+
+```
+STREAM_URL=https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8
 ```
 
 See `alexa-skill/README.md` for the minimal skill setup.

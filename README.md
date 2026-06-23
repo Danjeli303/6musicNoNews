@@ -91,11 +91,18 @@ steady audio rather than one-second PCM bursts.
 
 ### AWS deployment
 
-This branch includes a Docker Compose deployment for EC2. It runs the stream
-pipeline, Icecast, and Caddy HTTPS proxy. The Alexa-ready stream URL is:
+This branch includes a Docker Compose deployment for EC2. It runs the MP3
+stream pipeline, an HLS stream pipeline, Icecast, and Caddy HTTPS proxy. The
+Alexa-ready MP3 stream URL is:
 
 ```
 https://PUBLIC_HOST/the-radio.mp3
+```
+
+The HLS test stream URL is:
+
+```
+https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8
 ```
 
 For first AWS testing, `PUBLIC_HOST` can be an `sslip.io` hostname such as
@@ -103,7 +110,7 @@ For first AWS testing, `PUBLIC_HOST` can be an `sslip.io` hostname such as
 `alexa-skill/README.md` for the minimal Alexa skill scaffold.
 
 `radio6music_noNews_fip_plex.sh` creates a rolling HLS playlist and `.ts`
-segments for Plex or another player that can read local HLS files. Keep it
+segments for Plex, Caddy, or another player that can read HLS files. Keep it
 running while listening; it continuously refreshes the playlist.
 
 ```
@@ -115,8 +122,8 @@ OUT_DIR=/path/visible/to/plex ./radio6music_noNews_fip_plex.sh
 By default it writes to `plex_radio6music_noNews_fip/` in this repository. The
 main playlist is `radio6music_noNews_fip_plex.m3u8`, and logs are written to
 `radio6music_noNews_fip_plex.log`. Useful tuning variables include `OUT_DIR`,
-`HLS_TIME`, `HLS_LIST_SIZE`, `BBC_URL`, `FIP_URL`, and the FIP ducking controls
-listed above.
+`HLS_AUDIO_BITRATE`, `HLS_TIME`, `HLS_LIST_SIZE`, `HLS_RESTART_DELAY_SECONDS`,
+`BBC_URL`, `FIP_URL`, and the FIP ducking controls listed above.
 
 ## About Skipper
 

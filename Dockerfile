@@ -30,8 +30,9 @@ WORKDIR /app
 COPY Makefile ./
 COPY *.c *.h ./
 COPY radio6music_noNews_fip.sh ./
+COPY radio6music_noNews_fip_plex.sh ./
 COPY --from=build /app/silencer ./silencer
 
-RUN chmod +x ./radio6music_noNews_fip.sh
+RUN chmod +x ./radio6music_noNews_fip.sh ./radio6music_noNews_fip_plex.sh
 
 CMD ["./radio6music_noNews_fip.sh", "-AWS"]

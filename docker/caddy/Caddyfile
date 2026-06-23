@@ -1,4 +1,9 @@
 {$PUBLIC_HOST} {
+    handle_path /hls/* {
+        root * /srv/hls
+        file_server
+    }
+
     reverse_proxy /the-radio.mp3 icecast:8000
     respond /healthz "ok" 200
 }
