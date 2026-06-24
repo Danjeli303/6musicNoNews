@@ -208,8 +208,8 @@ assert_log_contains() {
 
 case_fits_source() {
     duration=$(recorded_duration "$INPUT")
-    awk -v offset="$INPUT_OFFSET_SECONDS" -v length="$INPUT_DURATION_SECONDS" -v duration="$duration" \
-      'BEGIN { exit !((offset + length) <= duration) }'
+    awk -v offset="$INPUT_OFFSET_SECONDS" -v case_length="$INPUT_DURATION_SECONDS" -v duration="$duration" \
+      'BEGIN { exit !((offset + case_length) <= duration) }'
 }
 
 skipper_fixture_path() {
