@@ -173,7 +173,6 @@ Rebuild after pulling repo changes:
 ```
 git pull
 docker compose up -d --build
-docker compose rm -sf streamer icecast
 ```
 
 Stop the stack:
