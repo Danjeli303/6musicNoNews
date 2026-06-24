@@ -7,23 +7,26 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SILENCER="$SCRIPT_DIR/silencer"
 SAMPLE_RATE=48000
 
-OUT_DIR="${OUT_DIR:-$SCRIPT_DIR/plex_radio6music_noNews_fip}"
-PLAYLIST="$OUT_DIR/radio6music_noNews_fip_plex.m3u8"
-SEGMENT_PATTERN="$OUT_DIR/radio6music_noNews_fip_%05d.ts"
-LOG="$OUT_DIR/radio6music_noNews_fip_plex.log"
+OUT_DIR="${OUT_DIR:-$SCRIPT_DIR/hls_radio6music_noNews}"
+PLAYLIST="$OUT_DIR/radio6music_noNews.m3u8"
+SEGMENT_PATTERN="$OUT_DIR/radio6music_noNews_%05d.ts"
+LOG="$OUT_DIR/radio6music_noNews_hls.log"
 
 FIP_VOLUME="${FIP_VOLUME:-0.85}"
 DUCK_THRESHOLD="${DUCK_THRESHOLD:-0.002}"
 DUCK_RATIO="${DUCK_RATIO:-20}"
 FIP_FADE_OUT_MS="${FIP_FADE_OUT_MS:-700}"
 FIP_FADE_IN_MS="${FIP_FADE_IN_MS:-1800}"
+HLS_AUDIO_BITRATE="${HLS_AUDIO_BITRATE:-128k}"
 HLS_TIME="${HLS_TIME:-6}"
 HLS_LIST_SIZE="${HLS_LIST_SIZE:-20}"
+HLS_RESTART_DELAY_SECONDS="${HLS_RESTART_DELAY_SECONDS:-1}"
+HLS_CLEAN_START="${HLS_CLEAN_START:-0}"
 
 usage() {
     printf 'Usage: %s [--check]\n' "$0"
     printf 'Writes a rolling HLS audio stream to: %s\n' "$PLAYLIST"
-    printf 'Set OUT_DIR=... to write the Plex-visible files elsewhere.\n'
+    printf 'Set OUT_DIR=... to write the HLS files elsewhere.\n'
 }
 
 require_command() {
@@ -35,6 +38,7 @@ require_command() {
 
 ensure_silencer() {
     if [ ! -x "$SILENCER" ]; then
+        require_command make
         make -C "$SCRIPT_DIR" silencer
     fi
 
@@ -64,12 +68,26 @@ mix_with_fip_filter() {
     printf '[0:a]aformat=sample_fmts=fltp:channel_layouts=stereo,asplit=2[bbc][sc];'
     printf '[1:a]aresample=%s,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=%s[fip];' "$SAMPLE_RATE" "$FIP_VOLUME"
     printf '[fip][sc]sidechaincompress=threshold=%s:ratio=%s:attack=%s:release=%s:makeup=1:link=maximum:detection=rms[fipduck];' "$DUCK_THRESHOLD" "$DUCK_RATIO" "$FIP_FADE_OUT_MS" "$FIP_FADE_IN_MS"
-    printf '[bbc][fipduck]amix=inputs=2:duration=first:normalize=0:dropout_transition=0,alimiter=limit=0.95[out]'
+    printf '[bbc][fipduck]amix=inputs=2:duration=first:normalize=0:dropout_transition=0,alimiter=limit=0.95,aresample=async=1000:first_pts=0[out]'
 }
 
-prepare_output_dir() {
+ensure_output_dir() {
     mkdir -p "$OUT_DIR"
-    rm -f "$PLAYLIST" "$OUT_DIR"/radio6music_noNews_fip_*.ts "$LOG"
+}
+
+clean_output_dir() {
+    ensure_output_dir
+    rm -f "$PLAYLIST" "$OUT_DIR"/radio6music_noNews_*.ts "$LOG"
+}
+
+ffmpeg_live_input_args() {
+    printf '%s\n' \
+      -reconnect 1 \
+      -reconnect_streamed 1 \
+      -reconnect_on_network_error 1 \
+      -reconnect_on_http_error 4xx,5xx \
+      -reconnect_delay_max 10 \
+      -rw_timeout 15000000
 }
 
 run_pipeline() {
@@ -82,9 +100,7 @@ run_pipeline() {
     ffmpeg \
       -hide_banner \
       -loglevel warning \
-      -reconnect 1 \
-      -reconnect_streamed 1 \
-      -reconnect_delay_max 2 \
+      $(ffmpeg_live_input_args) \
       -i "$BBC_URL" \
       $duration_args \
       -f s16le -ar "$SAMPLE_RATE" -ac 2 pipe:1 2>>"$LOG" | \
@@ -92,25 +108,25 @@ run_pipeline() {
     ffmpeg \
       -hide_banner \
       -loglevel warning \
+      -re \
       -f s16le -ar "$SAMPLE_RATE" -ac 2 -i pipe:0 \
-      -reconnect 1 \
-      -reconnect_streamed 1 \
-      -reconnect_delay_max 2 \
+      $(ffmpeg_live_input_args) \
       -i "$FIP_URL" \
       -filter_complex "$(mix_with_fip_filter)" \
       -map '[out]' \
       -c:a aac \
-      -b:a 192k \
+      -b:a "$HLS_AUDIO_BITRATE" \
       -f hls \
       -hls_time "$HLS_TIME" \
       -hls_list_size "$HLS_LIST_SIZE" \
-      -hls_flags delete_segments+program_date_time+omit_endlist \
+      -hls_start_number_source epoch \
+      -hls_flags append_list+delete_segments+program_date_time+omit_endlist+temp_file \
       -hls_segment_filename "$SEGMENT_PATTERN" \
       "$PLAYLIST" 2>>"$LOG"
 }
 
 run_check() {
-    prepare_output_dir
+    clean_output_dir
     run_pipeline 12
 
     if [ ! -s "$PLAYLIST" ]; then
@@ -118,7 +134,7 @@ run_check() {
         exit 1
     fi
 
-    if ! ls "$OUT_DIR"/radio6music_noNews_fip_*.ts >/dev/null 2>&1; then
+    if ! ls "$OUT_DIR"/radio6music_noNews_*.ts >/dev/null 2>&1; then
         printf 'Error: HLS segments were not created in: %s\n' "$OUT_DIR" >&2
         exit 1
     fi
@@ -126,6 +142,27 @@ run_check() {
     printf 'OK: wrote HLS playlist: %s\n' "$PLAYLIST"
     printf 'OK: wrote HLS segments in: %s\n' "$OUT_DIR"
     printf 'OK: log: %s\n' "$LOG"
+}
+
+run_pipeline_forever() {
+    while :; do
+        START_TIME=$(get_stream_start_time)
+        LONDON_UTC_OFFSET=$(get_london_utc_offset)
+
+        printf 'BBC stream timestamp: %s\n' "$START_TIME" >&2
+        printf 'London UTC offset: %s\n' "$LONDON_UTC_OFFSET" >&2
+        printf 'HLS audio bitrate: %s\n' "$HLS_AUDIO_BITRATE" >&2
+        printf 'HLS segment length: %s seconds\n' "$HLS_TIME" >&2
+        printf 'HLS list size: %s segments\n' "$HLS_LIST_SIZE" >&2
+        ensure_output_dir
+        if run_pipeline; then
+            printf 'HLS pipeline ended; restarting in %s seconds.\n' "$HLS_RESTART_DELAY_SECONDS" >&2
+        else
+            printf 'HLS pipeline failed; restarting in %s seconds.\n' "$HLS_RESTART_DELAY_SECONDS" >&2
+        fi
+
+        sleep "$HLS_RESTART_DELAY_SECONDS"
+    done
 }
 
 CHECK_ONLY=0
@@ -147,19 +184,21 @@ esac
 
 require_command curl
 require_command ffmpeg
-require_command make
 ensure_silencer
 
-START_TIME=$(get_stream_start_time)
-LONDON_UTC_OFFSET=$(get_london_utc_offset)
-
 if [ "$CHECK_ONLY" -eq 1 ]; then
+    START_TIME=$(get_stream_start_time)
+    LONDON_UTC_OFFSET=$(get_london_utc_offset)
     run_check
     exit 0
 fi
 
-prepare_output_dir
-printf 'Writing Plex HLS stream to: %s\n' "$PLAYLIST"
+printf 'Writing HLS stream to: %s\n' "$PLAYLIST"
 printf 'Log: %s\n' "$LOG"
 printf 'Keep this script running while you listen.\n'
-run_pipeline
+case "$HLS_CLEAN_START" in
+    1|true|TRUE|yes|YES)
+        clean_output_dir
+        ;;
+esac
+run_pipeline_forever

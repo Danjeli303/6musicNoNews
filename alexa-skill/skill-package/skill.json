@@ -1,0 +1,39 @@
+{
+  "manifest": {
+    "publishingInformation": {
+      "locales": {
+        "en-GB": {
+          "name": "Six Music Skipper",
+          "summary": "Play the live 6 Music news skipper stream.",
+          "description": "Plays the live 6 Music news skipper stream.",
+          "examplePhrases": [
+            "Alexa, open Six Music Skipper",
+            "Alexa, ask Six Music Skipper to play",
+            "Alexa, tell Six Music Skipper to start"
+          ],
+          "keywords": [
+            "radio",
+            "music",
+            "stream"
+          ]
+        }
+      },
+      "isAvailableWorldwide": false,
+      "testingInstructions": "Set the Lambda STREAM_URL environment variable to the deployed HTTPS stream URL before testing.",
+      "category": "MUSIC_AND_AUDIO"
+    },
+    "apis": {
+      "custom": {
+        "endpoint": {
+          "uri": "arn:aws:lambda:REGION:ACCOUNT_ID:function:the-radio-skill"
+        },
+        "interfaces": [
+          {
+            "type": "AUDIO_PLAYER"
+          }
+        ]
+      }
+    },
+    "manifestVersion": "1.0"
+  }
+}

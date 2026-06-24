@@ -1,0 +1,8 @@
+{$PUBLIC_HOST} {
+    handle_path /hls/* {
+        root * /srv/hls
+        file_server
+    }
+
+    respond /healthz "ok" 200
+}

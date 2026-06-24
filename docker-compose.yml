@@ -1,0 +1,41 @@
+services:
+  hls-streamer:
+    build:
+      context: .
+    command: ["./radio6music_noNews_hls.sh"]
+    restart: unless-stopped
+    environment:
+      BBC_URL: ${BBC_URL:-http://as-hls-ww-live.akamaized.net/pool_81827798/live/ww/bbc_6music/bbc_6music.isml/bbc_6music-audio%3d320000.norewind.m3u8}
+      FIP_URL: ${FIP_URL:-https://stream.radiofrance.fr/fip/fip_hifi.m3u8?id=radiofrance}
+      OUT_DIR: /srv/hls
+      FIP_VOLUME: ${FIP_VOLUME:-0.85}
+      DUCK_THRESHOLD: ${DUCK_THRESHOLD:-0.002}
+      DUCK_RATIO: ${DUCK_RATIO:-20}
+      FIP_FADE_OUT_MS: ${FIP_FADE_OUT_MS:-700}
+      FIP_FADE_IN_MS: ${FIP_FADE_IN_MS:-1800}
+      HLS_AUDIO_BITRATE: ${HLS_AUDIO_BITRATE:-128k}
+      HLS_TIME: ${HLS_TIME:-6}
+      HLS_LIST_SIZE: ${HLS_LIST_SIZE:-20}
+      HLS_RESTART_DELAY_SECONDS: ${HLS_RESTART_DELAY_SECONDS:-1}
+      HLS_CLEAN_START: ${HLS_CLEAN_START:-0}
+    volumes:
+      - hls_data:/srv/hls
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?Set PUBLIC_HOST in .env}
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - hls_data:/srv/hls:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  hls_data:
+  caddy_data:
+  caddy_config:
