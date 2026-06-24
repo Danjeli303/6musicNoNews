@@ -35,4 +35,4 @@ COPY --from=build /app/silencer ./silencer
 
 RUN chmod +x ./radio6music_noNews_fip.sh ./radio6music_noNews_fip_plex.sh
 
-CMD ["./radio6music_noNews_fip.sh", "-AWS"]
+CMD ["./radio6music_noNews_fip_plex.sh"]

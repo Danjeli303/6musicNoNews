@@ -4,6 +4,5 @@
         file_server
     }
 
-    reverse_proxy /the-radio.mp3 icecast:8000
     respond /healthz "ok" 200
 }

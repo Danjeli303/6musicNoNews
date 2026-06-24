@@ -81,25 +81,17 @@ Optional environment variables include `FIP_VOLUME`, `DUCK_THRESHOLD`,
 `DUCK_RATIO`, `FIP_FADE_OUT_MS`, `FIP_FADE_IN_MS`, `AWS_AUDIO_BITRATE`, and
 `AWS_RESTART_DELAY_SECONDS`.
 
-The Icecast/Alexa MP3 output is stereo. In AWS mode, the script uses more
+The optional Icecast MP3 output is stereo. In AWS mode, the script uses more
 patient FFmpeg reconnect settings and restarts the stream pipeline after a
 source or Icecast connection failure. The final mix is timestamp-smoothed before
-MP3 encoding to reduce short player underruns during long streams.
-The encoder reads the silencer output at realtime speed so Icecast receives
-steady audio rather than one-second PCM bursts.
+MP3 encoding, and the encoder reads the silencer output at realtime speed so
+Icecast receives steady audio rather than one-second PCM bursts.
 `AWS_RESTART_DELAY_SECONDS` controls the pause between restart attempts.
 
 ### AWS deployment
 
-This branch includes a Docker Compose deployment for EC2. It runs the MP3
-stream pipeline, an HLS stream pipeline, Icecast, and Caddy HTTPS proxy. The
-Alexa-ready MP3 stream URL is:
-
-```
-https://PUBLIC_HOST/the-radio.mp3
-```
-
-The HLS test stream URL is:
+This branch includes a Docker Compose deployment for EC2. It runs an HLS stream
+pipeline and Caddy HTTPS proxy. The Alexa-ready HLS stream URL is:
 
 ```
 https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8

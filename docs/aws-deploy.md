@@ -1,22 +1,13 @@
 # AWS EC2 Docker Deployment
 
-This deployment runs four containers on one EC2 instance:
+This deployment runs two containers on one EC2 instance:
 
-- `streamer`: runs `./radio6music_noNews_fip.sh -AWS`
 - `hls-streamer`: writes a rolling AAC/HLS playlist and segments
-- `icecast`: receives the MP3 stream privately on the Docker network
-- `caddy`: exposes `https://PUBLIC_HOST/the-radio.mp3` and
-  `https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8` on ports `80` and
-  `443`
+- `caddy`: exposes `https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8`
+  on ports `80` and `443`
 
 Alexa needs an HTTPS stream URL on port `443` with a trusted certificate. For
 first testing, use `sslip.io` DNS:
-
-```
-https://EC2_PUBLIC_IP.sslip.io/the-radio.mp3
-```
-
-The HLS test URL is:
 
 ```
 https://EC2_PUBLIC_IP.sslip.io/hls/radio6music_noNews_fip_plex.m3u8
@@ -41,7 +32,7 @@ Security group inbound rules:
 | HTTP | 80 | `0.0.0.0/0`, `::/0` |
 | HTTPS | 443 | `0.0.0.0/0`, `::/0` |
 
-Do not open Icecast port `8000`; Caddy is the public entrypoint.
+Caddy is the public entrypoint; no other application ports need to be opened.
 
 ## 2. Install Docker
 
@@ -92,15 +83,11 @@ PUBLIC_IP=$(curl -fsS https://checkip.amazonaws.com | tr -d '\n')
 sed -i "s/203.0.113.10/${PUBLIC_IP}/" .env
 ```
 
-Edit `.env` and set unique passwords:
+Edit `.env` if you need to change `PUBLIC_HOST` or tune the HLS stream:
 
 ```
 nano .env
 ```
-
-Use simple password characters for `ICECAST_SOURCE_PASSWORD`, such as letters,
-numbers, dashes, and underscores. The streamer embeds this password in an
-Icecast URL.
 
 ## 4. Start The Stream
 
@@ -119,16 +106,10 @@ docker compose up -d --build
 Watch startup:
 
 ```
-docker compose logs -f streamer hls-streamer
+docker compose logs -f hls-streamer caddy
 ```
 
 The public stream URL is:
-
-```
-https://PUBLIC_HOST/the-radio.mp3
-```
-
-The public HLS test URL is:
 
 ```
 https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8
@@ -137,38 +118,26 @@ https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8
 For example:
 
 ```
-https://203.0.113.10.sslip.io/the-radio.mp3
+https://203.0.113.10.sslip.io/hls/radio6music_noNews_fip_plex.m3u8
 ```
-
-The deployed MP3 stream is stereo. The streamer uses FFmpeg reconnect
-settings for the BBC and FIP inputs, and if the pipeline still exits after a
-long-running interruption, it refreshes the BBC stream timestamp and restarts.
-The final mix is timestamp-smoothed before MP3 encoding to reduce short player
-underruns during long streams.
-The encoder reads the silencer output at realtime speed so Icecast receives
-steady audio rather than one-second PCM bursts.
-Set `AWS_RESTART_DELAY_SECONDS` in `.env` if you want a longer or shorter pause
-between restart attempts.
-Icecast sends a one-minute startup burst at the default `AWS_AUDIO_BITRATE` so
-Alexa can begin with more playback cushion.
 
 The HLS stream uses AAC segments with `HLS_AUDIO_BITRATE=128k`,
 `HLS_TIME=6`, and `HLS_LIST_SIZE=20` by default. It is served directly by Caddy
-from the shared `hls_data` volume.
+from the shared `hls_data` volume. Set `HLS_RESTART_DELAY_SECONDS` in `.env` if
+you want a longer or shorter pause between restart attempts after an upstream
+stream failure.
 
 ## 5. Smoke Tests
 
 From your laptop or the EC2 instance:
 
 ```
-curl -I https://PUBLIC_HOST/the-radio.mp3
 curl -I https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8
 ```
 
-For audio validation, use the `ffprobe` installed inside the streamer image:
+For audio validation, use the `ffprobe` installed inside the hls-streamer image:
 
 ```
-docker compose exec streamer ffprobe https://PUBLIC_HOST/the-radio.mp3
 docker compose exec hls-streamer ffprobe https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8
 ```
 
@@ -184,12 +153,6 @@ docker compose logs caddy
 ## 6. Alexa
 
 Use the stream URL as the Alexa Lambda `STREAM_URL`:
-
-```
-STREAM_URL=https://PUBLIC_HOST/the-radio.mp3
-```
-
-For HLS testing, use:
 
 ```
 STREAM_URL=https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8
@@ -210,6 +173,7 @@ Rebuild after pulling repo changes:
 ```
 git pull
 docker compose up -d --build
+docker compose rm -sf streamer icecast
 ```
 
 Stop the stack:
@@ -237,11 +201,5 @@ Cost cleanup:
   `203.0.113.10.sslip.io`.
 - Ports `80` and `443` must be open to the internet for Caddy certificate
   issuance and Alexa playback.
-- Port `8000` should stay closed publicly.
-- If the stream is silent, inspect `docker compose logs streamer`.
+- If the stream is silent, inspect `docker compose logs hls-streamer`.
 - If HTTPS fails, inspect `docker compose logs caddy`.
-- If the Icecast source password changes, restart the stack:
-
-```
-docker compose up -d
-```
