@@ -448,6 +448,11 @@ static void test_default_config(void)
     EXPECT_EQ_INT(OUTPUT_AUDIO, config.right_debug_output_mode);
     EXPECT_EQ_INT(0, config.time_restricted_silence_enabled);
     EXPECT_EQ_INT(0, config.stream_time_enabled);
+    EXPECT_EQ_INT(2, config.time_restriction_window.range_count);
+    EXPECT_EQ_INT(58, config.time_restriction_window.ranges[0].start_minute);
+    EXPECT_EQ_INT(5, config.time_restriction_window.ranges[0].end_minute);
+    EXPECT_EQ_INT(28, config.time_restriction_window.ranges[1].start_minute);
+    EXPECT_EQ_INT(35, config.time_restriction_window.ranges[1].end_minute);
 }
 
 static void test_parse_utc_offset_minutes(void)
@@ -545,6 +550,7 @@ static void test_command_line_parsing(void)
         "-r4",
         "-T",
         "2026-06-20T18:38:11.200Z",
+        "-w0-5,20-30,30-40",
         "-z+01:00",
         "-q"
     };
@@ -560,6 +566,13 @@ static void test_command_line_parsing(void)
     EXPECT_EQ_INT(OUTPUT_TENSOR, config.right_debug_output_mode);
     EXPECT_EQ_INT(1, config.stream_time_enabled);
     EXPECT_EQ_INT(60, config.stream_time_utc_offset_minutes);
+    EXPECT_EQ_INT(3, config.time_restriction_window.range_count);
+    EXPECT_EQ_INT(0, config.time_restriction_window.ranges[0].start_minute);
+    EXPECT_EQ_INT(5, config.time_restriction_window.ranges[0].end_minute);
+    EXPECT_EQ_INT(20, config.time_restriction_window.ranges[1].start_minute);
+    EXPECT_EQ_INT(30, config.time_restriction_window.ranges[1].end_minute);
+    EXPECT_EQ_INT(30, config.time_restriction_window.ranges[2].start_minute);
+    EXPECT_EQ_INT(40, config.time_restriction_window.ranges[2].end_minute);
     EXPECT_EQ_INT(1, config.quiet_mode);
 }
 
@@ -576,8 +589,10 @@ static void test_command_line_parsing_rejects_invalid_inputs(void)
     char *missing_tensor[] = { "silencer", "-d" };
     char *missing_time[] = { "silencer", "-T" };
     char *missing_zone[] = { "silencer", "-z" };
+    char *missing_window[] = { "silencer", "-w" };
     char *bad_time[] = { "silencer", "-T", "2024-02-30T00:00:00Z" };
     char *bad_zone[] = { "silencer", "-z+24:00" };
+    char *bad_window[] = { "silencer", "-w0-60" };
     char *extra[] = { "silencer", "extra" };
 
     initialize_program_config(&config);
@@ -601,9 +616,13 @@ static void test_command_line_parsing_rejects_invalid_inputs(void)
     initialize_program_config(&config);
     EXPECT_FALSE(parse_args_suppressed(2, missing_zone, &config));
     initialize_program_config(&config);
+    EXPECT_FALSE(parse_args_suppressed(2, missing_window, &config));
+    initialize_program_config(&config);
     EXPECT_FALSE(parse_args_suppressed(3, bad_time, &config));
     initialize_program_config(&config);
     EXPECT_FALSE(parse_args_suppressed(2, bad_zone, &config));
+    initialize_program_config(&config);
+    EXPECT_FALSE(parse_args_suppressed(2, bad_window, &config));
     initialize_program_config(&config);
     EXPECT_FALSE(parse_args_suppressed(2, extra, &config));
 }
@@ -616,6 +635,8 @@ static void test_time_restricted_silence_window(void)
     ProgramConfig inactive_config = config_with_stream_time("2026-06-20T09:10:00Z", 60);
     ProgramConfig last_window_config = config_with_stream_time("2026-06-20T21:58:00Z", 0);
     ProgramConfig late_config = config_with_stream_time("2026-06-20T22:00:00Z", 0);
+    ProgramConfig extended_config = config_with_stream_time("2026-06-20T06:00:00Z", 0);
+    ProgramConfig extended_half_hour_config = config_with_stream_time("2026-06-20T06:28:00Z", 0);
 
     pre_news_config.sample_rate = 1000;
     active_config.sample_rate = 1000;
@@ -623,6 +644,10 @@ static void test_time_restricted_silence_window(void)
     inactive_config.sample_rate = 1000;
     last_window_config.sample_rate = 1000;
     late_config.sample_rate = 1000;
+    extended_config.sample_rate = 1000;
+    extended_half_hour_config.sample_rate = 1000;
+    EXPECT_TRUE(parse_time_restriction_window("58-10,28-40", &extended_config.time_restriction_window, NULL));
+    EXPECT_TRUE(parse_time_restriction_window("58-10,28-40", &extended_half_hour_config.time_restriction_window, NULL));
 
     EXPECT_FALSE(is_time_restricted_silence_active_at_sample(&pre_news_config, 0));
     EXPECT_TRUE(is_time_restricted_silence_active_at_sample(&active_config, 0));
@@ -634,6 +659,11 @@ static void test_time_restricted_silence_window(void)
     EXPECT_TRUE(is_time_restricted_silence_active_at_sample(&last_window_config, 0));
     EXPECT_FALSE(is_time_restricted_silence_active_at_sample(&inactive_config, 0));
     EXPECT_FALSE(is_time_restricted_silence_active_at_sample(&late_config, 0));
+
+    EXPECT_TRUE(is_time_restricted_silence_active_at_sample(&extended_config, 9 * 60 * extended_config.sample_rate));
+    EXPECT_FALSE(is_time_restricted_silence_active_at_sample(&extended_config, 10 * 60 * extended_config.sample_rate));
+    EXPECT_TRUE(is_time_restricted_silence_active_at_sample(&extended_half_hour_config, 11 * 60 * extended_half_hour_config.sample_rate));
+    EXPECT_FALSE(is_time_restricted_silence_active_at_sample(&extended_half_hour_config, 12 * 60 * extended_half_hour_config.sample_rate));
 }
 
 static void test_should_silence_audio_mode_at_sample(void)

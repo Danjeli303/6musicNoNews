@@ -8,6 +8,7 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 
 #include "skipper_time.h"
@@ -15,6 +16,17 @@
 #define MAX_UTC_OFFSET_MINUTES (23 * 60 + 59)
 
 static int parse_fixed_digits (const char **text_ptr, int digit_count, int *value_out);
+static int minute_is_valid (int minute);
+static int minute_in_wrapping_range (int minute, int start_minute, int end_minute);
+
+void init_default_time_restriction_window (TimeRestrictionWindow *window)
+{
+    window->range_count = 2;
+    window->ranges [0].start_minute = 58;
+    window->ranges [0].end_minute = 5;
+    window->ranges [1].start_minute = 28;
+    window->ranges [1].end_minute = 35;
+}
 
 int parse_iso8601_timestamp_ms (const char *time_text, int64_t *epoch_ms_out, int *utc_offset_minutes_out)
 {
@@ -133,6 +145,75 @@ int parse_utc_offset_minutes (const char *offset_text, int *utc_offset_minutes_o
     return *cursor == '\0';
 }
 
+int parse_time_restriction_window (const char *window_text, TimeRestrictionWindow *window_out, const char **end_ptr_out)
+{
+    TimeRestrictionWindow parsed_window = { 0 };
+    const char *cursor = window_text;
+
+    while (1) {
+        char *end_ptr;
+        long start_minute;
+        long end_minute;
+
+        if (parsed_window.range_count == TIME_RESTRICTION_MAX_RANGES)
+            return 0;
+
+        while (isspace ((unsigned char)*cursor))
+            cursor++;
+
+        start_minute = strtol (cursor, &end_ptr, 10);
+
+        if (end_ptr == cursor || !minute_is_valid ((int) start_minute))
+            return 0;
+
+        cursor = end_ptr;
+
+        while (isspace ((unsigned char)*cursor))
+            cursor++;
+
+        if (*cursor != '-')
+            return 0;
+
+        cursor++;
+
+        while (isspace ((unsigned char)*cursor))
+            cursor++;
+
+        end_minute = strtol (cursor, &end_ptr, 10);
+
+        if (end_ptr == cursor || !minute_is_valid ((int) end_minute) || start_minute == end_minute)
+            return 0;
+
+        parsed_window.ranges [parsed_window.range_count].start_minute = (int) start_minute;
+        parsed_window.ranges [parsed_window.range_count].end_minute = (int) end_minute;
+        parsed_window.range_count++;
+        cursor = end_ptr;
+
+        while (isspace ((unsigned char)*cursor))
+            cursor++;
+
+        if (*cursor != ',')
+            break;
+
+        cursor++;
+    }
+
+    if (!parsed_window.range_count)
+        return 0;
+
+    *window_out = parsed_window;
+
+    if (end_ptr_out) {
+        *end_ptr_out = cursor;
+        return 1;
+    }
+
+    while (isspace ((unsigned char)*cursor))
+        cursor++;
+
+    return *cursor == '\0';
+}
+
 int format_epoch_ms_with_utc_offset (int64_t epoch_ms, int utc_offset_minutes, char *buffer, size_t buffer_size)
 {
     int64_t shifted_epoch_ms = epoch_ms + utc_offset_minutes * 60LL * 1000LL;
@@ -174,6 +255,18 @@ int is_time_restricted_window_active (int stream_time_enabled, int64_t stream_st
                                       int stream_time_utc_offset_minutes, int64_t sample_index,
                                       int sample_rate)
 {
+    TimeRestrictionWindow window;
+
+    init_default_time_restriction_window (&window);
+    return is_time_restricted_window_active_with_config (stream_time_enabled, stream_start_epoch_ms,
+                                                        stream_time_utc_offset_minutes, sample_index,
+                                                        sample_rate, &window);
+}
+
+int is_time_restricted_window_active_with_config (int stream_time_enabled, int64_t stream_start_epoch_ms,
+                                                 int stream_time_utc_offset_minutes, int64_t sample_index,
+                                                 int sample_rate, const TimeRestrictionWindow *window)
+{
     time_t time_for_restriction;
     struct tm *time_info;
 
@@ -194,7 +287,14 @@ int is_time_restricted_window_active (int stream_time_enabled, int64_t stream_st
     int hour = time_info->tm_hour;
     int min = time_info->tm_min;
 
-    return hour >= 6 && hour <= 21 && ((min >= 58 || min < 5) || (min >= 28 && min < 35));
+    if (hour < 6 || hour > 21)
+        return 0;
+
+    for (int i = 0; i < window->range_count; ++i)
+        if (minute_in_wrapping_range (min, window->ranges [i].start_minute, window->ranges [i].end_minute))
+            return 1;
+
+    return 0;
 }
 
 static int parse_fixed_digits (const char **text_ptr, int digit_count, int *value_out)
@@ -212,6 +312,19 @@ static int parse_fixed_digits (const char **text_ptr, int digit_count, int *valu
     *value_out = value;
     *text_ptr = cursor + digit_count;
     return 1;
+}
+
+static int minute_is_valid (int minute)
+{
+    return minute >= 0 && minute <= 59;
+}
+
+static int minute_in_wrapping_range (int minute, int start_minute, int end_minute)
+{
+    if (start_minute <= end_minute)
+        return minute >= start_minute && minute < end_minute;
+
+    return minute >= start_minute || minute < end_minute;
 }
 
 int is_leap_year (int year)

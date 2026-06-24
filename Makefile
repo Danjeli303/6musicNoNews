@@ -5,7 +5,7 @@ CC := gcc
 utils := skipper tensor-gen bin2c silencer
 tests := skipper_tests silencer_tests
 
-.PHONY: all test audio-test clean
+.PHONY: all test audio-test sample-recording-test clean
 
 all: $(utils)
 
@@ -36,6 +36,9 @@ test: $(tests)
 
 audio-test: skipper silencer
 	./audio_validation_tests.sh
+
+sample-recording-test: skipper
+	./sample_recording_tests.sh
 
 clean:
 	rm -f skipper tensor-gen bin2c silencer $(tests)

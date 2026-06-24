@@ -79,6 +79,76 @@ assert_pcm_has_signal() {
     fi
 }
 
+assert_equals() {
+    actual=$1
+    expected=$2
+    label=$3
+
+    if [ "$actual" != "$expected" ]; then
+        printf 'Error: %s expected "%s", got "%s"\n' "$label" "$expected" "$actual" >&2
+        exit 1
+    fi
+}
+
+assert_output_contains() {
+    output_file=$1
+    pattern=$2
+    label=$3
+
+    if ! grep -E "$pattern" "$output_file" >/dev/null 2>&1; then
+        printf 'Error: %s missing %s\n' "$output_file" "$label" >&2
+        exit 1
+    fi
+}
+
+assert_single_progress_line() {
+    output_file=$1
+    count=$(tr '\r' '\n' < "$output_file" | grep -E '^Processed: [0-9]+%' | wc -l | awk '{ print $1 }')
+    newline_count=$(grep -E '^Processed: [0-9]+%' "$output_file" | wc -l | awk '{ print $1 }')
+
+    if [ "$count" -lt 1 ]; then
+        printf 'Error: %s missing carriage-return progress output\n' "$output_file" >&2
+        exit 1
+    fi
+
+    if [ "$newline_count" -gt 1 ]; then
+        printf 'Error: %s printed %s newline progress lines instead of rewriting one line\n' "$output_file" "$newline_count" >&2
+        exit 1
+    fi
+}
+
+ffprobe_value() {
+    ffprobe \
+      -hide_banner \
+      -loglevel error \
+      -show_entries "$1" \
+      -of default=noprint_wrappers=1:nokey=1 \
+      "$2" | head -n 1
+}
+
+ffprobe_tag_value() {
+    tag=$1
+    path=$2
+    value=$(ffprobe \
+      -hide_banner \
+      -loglevel error \
+      -show_entries "format_tags=$tag" \
+      -of default=noprint_wrappers=1:nokey=1 \
+      "$path" | head -n 1)
+
+    if [ -z "$value" ]; then
+        value=$(ffprobe \
+          -hide_banner \
+          -loglevel error \
+          -select_streams a:0 \
+          -show_entries "stream_tags=$tag" \
+          -of default=noprint_wrappers=1:nokey=1 \
+          "$path" | head -n 1)
+    fi
+
+    printf '%s\n' "$value"
+}
+
 playlist_duration() {
     awk -F ':' '
         /^#EXTINF:/ {
@@ -106,8 +176,10 @@ generate_source() {
       -filter_complex "[0:a]highpass=f=250,lowpass=f=3400,volume=0.45[news];[1:a][2:a]amix=inputs=2:normalize=0,volume=0.18[music];[news][music]concat=n=2:v=0:a=1,aresample=$SAMPLE_RATE[a]" \
       -map "[a]" \
       -metadata date="$PROGRAMME_START" \
+      -metadata title="Synthetic 6 Music Fixture" \
       -c:a aac \
       -b:a 128k \
+      -ac "$CHANNELS" \
       "$SOURCE"
 
     assert_file_nonempty "$SOURCE"
@@ -116,8 +188,141 @@ generate_source() {
 }
 
 run_wrapper_checks() {
-    "$SCRIPT_DIR/skip_6music_news.sh" --check "$SOURCE" >/dev/null
+    check_stdout="$WORK_DIR/skip-check.stdout"
+    override_check_stdout="$WORK_DIR/skip-check-override.stdout"
+
+    "$SCRIPT_DIR/skip_6music_news.sh" --check "$SOURCE" >"$check_stdout"
+    assert_output_contains "$check_stdout" 'OK: skipper window: 0-5,30-40' 'default skipper window'
+
+    "$SCRIPT_DIR/skip_6music_news.sh" --check -w 58-10,28-40 "$SOURCE" >"$override_check_stdout"
+    assert_output_contains "$override_check_stdout" 'OK: skipper window: 58-10,28-40' 'override skipper window'
+
+    if "$SCRIPT_DIR/skip_6music_news.sh" --check -w >/dev/null 2>&1; then
+        printf 'Error: skip_6music_news.sh accepted missing -w ranges\n' >&2
+        exit 1
+    fi
+
     "$SCRIPT_DIR/silence_6music_news.sh" --check "$SOURCE" >/dev/null
+}
+
+expected_format_matches_extension() {
+    format=$1
+    extension=$2
+
+    case "$extension:$format" in
+        m4a:*m4a*|m4a:*mov*mp4*|mp3:*mp3*|flac:*flac*|ogg:*ogg*|wav:*wav*)
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
+expected_codec_matches_extension() {
+    codec=$1
+    extension=$2
+
+    case "$extension:$codec" in
+        m4a:aac|mp3:mp3|flac:flac|ogg:vorbis|wav:pcm_s16le)
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
+run_skip_file_conversion_check() {
+    conversion_source=$1
+    extension=${conversion_source##*.}
+    base=$(basename -- "$conversion_source")
+    base_no_ext=${base%.*}
+    output="$WORK_DIR/${base_no_ext}_newsskip.$extension"
+    log="$WORK_DIR/${base_no_ext}_newsskip.log"
+    stdout="$WORK_DIR/${base_no_ext}-newsskip.stdout"
+
+    rm -f "$output" "$log" "$stdout"
+
+    "$SCRIPT_DIR/skip_6music_news.sh" "$conversion_source" >"$stdout"
+
+    assert_file_nonempty "$output"
+    assert_file_nonempty "$log"
+    assert_output_contains "$stdout" 'Processed: [0-9]+%' 'progress percentage'
+    assert_output_contains "$stdout" 'Processed: 100%' 'completion percentage'
+    assert_output_contains "$stdout" 'Skipper window: 0-5,30-40' 'default skipper window'
+    assert_single_progress_line "$stdout"
+
+    output_format=$(ffprobe_value format=format_name "$output")
+    output_codec=$(ffprobe_value stream=codec_name "$output")
+    output_date=$(ffprobe_tag_value date "$output")
+    output_title=$(ffprobe_tag_value title "$output")
+    output_sample_rate=$(ffprobe_value stream=sample_rate "$output")
+    output_channels=$(ffprobe_value stream=channels "$output")
+
+    if ! expected_format_matches_extension "$output_format" "$extension"; then
+        printf 'Error: output has .%s extension but ffprobe reports format "%s"\n' "$extension" "$output_format" >&2
+        exit 1
+    fi
+
+    if ! expected_codec_matches_extension "$output_codec" "$extension"; then
+        printf 'Error: output has .%s extension but ffprobe reports codec "%s"\n' "$extension" "$output_codec" >&2
+        exit 1
+    fi
+
+    assert_equals "$output_date" "$PROGRAMME_START" 'copied date metadata'
+    assert_equals "$output_title" 'Synthetic 6 Music Fixture' 'copied title metadata'
+    assert_equals "$output_sample_rate" "$SAMPLE_RATE" 'preserved sample rate'
+    assert_equals "$output_channels" "$CHANNELS" 'preserved channel count'
+}
+
+run_skip_file_conversion_window_override_check() {
+    output="$WORK_DIR/source_override_newsskip.m4a"
+    stdout="$WORK_DIR/source-override-newsskip.stdout"
+
+    rm -f "$output" "$stdout" "${output%.*}.log"
+
+    "$SCRIPT_DIR/skip_6music_news.sh" --window=58-10,28-40 "$SOURCE" "$output" >"$stdout"
+
+    assert_file_nonempty "$output"
+    assert_output_contains "$stdout" 'Skipper window: 58-10,28-40' 'override skipper window'
+}
+
+generate_transcoded_fixture() {
+    extension=$1
+    codec_args=$2
+    target="$WORK_DIR/source.$extension"
+
+    ffmpeg \
+      -hide_banner \
+      -loglevel error \
+      -y \
+      -i "$SOURCE" \
+      -vn \
+      -map 0:a:0 \
+      -metadata date="$PROGRAMME_START" \
+      -metadata title="Synthetic 6 Music Fixture" \
+      -metadata DATE="$PROGRAMME_START" \
+      -metadata TITLE="Synthetic 6 Music Fixture" \
+      $codec_args \
+      "$target"
+
+    assert_file_nonempty "$target"
+}
+
+run_format_conversion_checks() {
+    run_skip_file_conversion_check "$SOURCE"
+    run_skip_file_conversion_window_override_check
+
+    generate_transcoded_fixture mp3 "-c:a libmp3lame -b:a 128k -ar $SAMPLE_RATE -ac $CHANNELS"
+    run_skip_file_conversion_check "$WORK_DIR/source.mp3"
+
+    generate_transcoded_fixture flac "-c:a flac -ar $SAMPLE_RATE -ac $CHANNELS"
+    run_skip_file_conversion_check "$WORK_DIR/source.flac"
+
+    generate_transcoded_fixture ogg "-c:a libvorbis -b:a 128k -ar $SAMPLE_RATE -ac $CHANNELS"
+    run_skip_file_conversion_check "$WORK_DIR/source.ogg"
+
+    generate_transcoded_fixture wav "-c:a pcm_s16le -ar $SAMPLE_RATE -ac $CHANNELS"
+    run_skip_file_conversion_check "$WORK_DIR/source.wav"
 }
 
 run_silencer_slice() {
@@ -202,10 +407,11 @@ main() {
     build_programs
     generate_source
     run_wrapper_checks
+    run_format_conversion_checks
     run_silencer_checks
     run_hls_mux_check
 
-    printf 'OK: generated audio, wrapper checks, scheduled silence/pass-through, and HLS muxing\n'
+    printf 'OK: generated audio, wrapper checks, file conversion, scheduled silence/pass-through, and HLS muxing\n'
 }
 
 main "$@"

@@ -76,7 +76,8 @@ static const char *usage =
 "           -t[<n>]          = silence talk, with optional threshold offset\n" //
 "                            = (raise or lower talk threshold +/- 99 points)\n"
 "           -T <iso-time>    = stream start time (e.g. HLS PROGRAM-DATE-TIME)\n" //
-"           -x               = with -t, enables time-restricted talk silencing (6am-10pm, -2/+5 min around hour/half-hour)\n" // New option
+"           -w<ranges>       = with -x, active minute ranges (default 58-5,28-35)\n"
+"           -x               = with -t, enables time-restricted talk silencing (6am-10pm, :58-:05 and :28-:35 by default)\n" // New option
 "           -v[<n>]          = set verbosity + [rate in seconds]\n" //
 "           -z<+/-HH:MM>     = UTC offset for stream debug time display (e.g. +01:00)\n\n" //
 " Web:      Visit www.github.com/dbry/skipper for latest version and info\n\n"; //
@@ -123,6 +124,7 @@ typedef struct {
     int64_t stream_start_epoch_ms;
     int stream_time_utc_offset_minutes;
     int stream_time_utc_offset_is_set;
+    TimeRestrictionWindow time_restriction_window;
 } ProgramConfig;
 
 typedef struct {
@@ -296,6 +298,7 @@ static void initialize_program_config(ProgramConfig *config) {
     config->stream_start_epoch_ms = 0;
     config->stream_time_utc_offset_minutes = 0;
     config->stream_time_utc_offset_is_set = 0;
+    init_default_time_restriction_window(&config->time_restriction_window);
 }
 
 // Parses command-line arguments and populates the ProgramConfig struct.
@@ -305,6 +308,7 @@ static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *co
     int tensor_input_file_follows = 0; 
     int stream_start_time_follows = 0;
     int stream_time_utc_offset_follows = 0;
+    int time_restriction_window_follows = 0;
 
     char **current_arg_ptr = argv + 1;
     int arg_count = argc - 1;
@@ -323,6 +327,12 @@ static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *co
         } else if (stream_time_utc_offset_follows) {
             if (!parse_stream_time_utc_offset_option(config, current_arg_str)) return 0;
             stream_time_utc_offset_follows = 0;
+        } else if (time_restriction_window_follows) {
+            if (!parse_time_restriction_window(current_arg_str, &config->time_restriction_window, NULL)) {
+                fprintf(stderr, "\nError: invalid -w time restriction window \"%s\" (expected ranges like 58-10,28-40)\n", current_arg_str);
+                return 0;
+            }
+            time_restriction_window_follows = 0;
         }
 #if defined (_WIN32)
         else if ((current_arg_str[0] == '-' || current_arg_str[0] == '/') && current_arg_str[1])
@@ -387,6 +397,17 @@ static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *co
                             stream_start_time_follows = 1;
                         }
                         break;
+                    case 'w':
+                        if (*next_char_in_option) {
+                            if (!parse_time_restriction_window(next_char_in_option, &config->time_restriction_window, NULL)) {
+                                fprintf(stderr, "\nError: invalid -w time restriction window \"%s\" (expected ranges like 58-10,28-40)\n", next_char_in_option);
+                                return 0;
+                            }
+                            option_char_ptr = current_arg_str + strlen(current_arg_str) - 1;
+                        } else {
+                            time_restriction_window_follows = 1;
+                        }
+                        break;
                     case 'x': // New option for time-restricted silencing
                         config->time_restricted_silence_enabled = 1;
                         break;
@@ -421,6 +442,7 @@ static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *co
     if (tensor_input_file_follows) { fprintf(stderr, "\nError: -d requires a tensor filename\n"); return 0; }
     if (stream_start_time_follows) { fprintf(stderr, "\nError: -T requires an ISO-8601 stream start time\n"); return 0; }
     if (stream_time_utc_offset_follows) { fprintf(stderr, "\nError: -z requires a UTC offset like +01:00\n"); return 0; }
+    if (time_restriction_window_follows) { fprintf(stderr, "\nError: -w requires minute ranges like 58-10,28-40\n"); return 0; }
     return 1; // Success
 }
 
@@ -886,19 +908,21 @@ static int should_bypass_talk_silencing_due_to_time_restriction(const ProgramCon
         return 0; // Not in -t -x mode, so no bypassing based on time. Normal -t logic applies.
     }
 
-    return !is_time_restricted_window_active(config->stream_time_enabled,
-                                             config->stream_start_epoch_ms,
-                                             config->stream_time_utc_offset_minutes,
-                                             state->total_samples_processed,
-                                             config->sample_rate);
+    return !is_time_restricted_window_active_with_config(config->stream_time_enabled,
+                                                         config->stream_start_epoch_ms,
+                                                         config->stream_time_utc_offset_minutes,
+                                                         state->total_samples_processed,
+                                                         config->sample_rate,
+                                                         &config->time_restriction_window);
 }
 
 static int is_time_restricted_silence_active_at_sample(const ProgramConfig *config, int64_t sample_index) {
-    return is_time_restricted_window_active(config->stream_time_enabled,
-                                            config->stream_start_epoch_ms,
-                                            config->stream_time_utc_offset_minutes,
-                                            sample_index,
-                                            config->sample_rate);
+    return is_time_restricted_window_active_with_config(config->stream_time_enabled,
+                                                        config->stream_start_epoch_ms,
+                                                        config->stream_time_utc_offset_minutes,
+                                                        sample_index,
+                                                        config->sample_rate,
+                                                        &config->time_restriction_window);
 }
 
 static int should_silence_audio_mode_at_sample(const ProgramConfig *config, int audio_mode, int64_t sample_index) {

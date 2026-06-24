@@ -327,6 +327,33 @@ static void test_parse_utc_offset_minutes(void)
     EXPECT_FALSE(parse_utc_offset_minutes("+05:45tail", &offset, NULL));
 }
 
+static void test_parse_time_restriction_window(void)
+{
+    TimeRestrictionWindow window;
+    const char *end = NULL;
+
+    EXPECT_TRUE(parse_time_restriction_window("58-10,28-40", &window, NULL));
+    EXPECT_EQ_INT(2, window.range_count);
+    EXPECT_EQ_INT(58, window.ranges[0].start_minute);
+    EXPECT_EQ_INT(10, window.ranges[0].end_minute);
+    EXPECT_EQ_INT(28, window.ranges[1].start_minute);
+    EXPECT_EQ_INT(40, window.ranges[1].end_minute);
+
+    EXPECT_TRUE(parse_time_restriction_window("0-5,20-30,30-40tail", &window, &end));
+    EXPECT_EQ_INT(3, window.range_count);
+    EXPECT_EQ_INT(0, window.ranges[0].start_minute);
+    EXPECT_EQ_INT(5, window.ranges[0].end_minute);
+    EXPECT_EQ_INT('t', *end);
+
+    EXPECT_FALSE(parse_time_restriction_window("0-5,20-30,30-40tail", &window, NULL));
+    EXPECT_FALSE(parse_time_restriction_window("", &window, NULL));
+    EXPECT_FALSE(parse_time_restriction_window("0", &window, NULL));
+    EXPECT_FALSE(parse_time_restriction_window("0-60", &window, NULL));
+    EXPECT_FALSE(parse_time_restriction_window("-1-5", &window, NULL));
+    EXPECT_FALSE(parse_time_restriction_window("5-5", &window, NULL));
+    EXPECT_FALSE(parse_time_restriction_window("0-5,", &window, NULL));
+}
+
 static void test_parse_iso8601_timestamp_ms(void)
 {
     int offset = 123;
@@ -366,6 +393,9 @@ static void test_time_restricted_skip_window(void)
 {
     int offset = 0;
     int sample_rate = 1000;
+    TimeRestrictionWindow default_window;
+    TimeRestrictionWindow custom_window;
+    TimeRestrictionWindow extended_window;
     int64_t active_start = parse_epoch_ms_or_fail("2026-06-20T06:00:00Z", &offset);
     int64_t pre_news_start = parse_epoch_ms_or_fail("2026-06-20T05:58:00Z", &offset);
     int64_t half_hour_start = parse_epoch_ms_or_fail("2026-06-20T06:28:00Z", &offset);
@@ -373,34 +403,52 @@ static void test_time_restricted_skip_window(void)
     int64_t last_window_start = parse_epoch_ms_or_fail("2026-06-20T21:58:00Z", &offset);
     int64_t late_start = parse_epoch_ms_or_fail("2026-06-20T22:00:00Z", &offset);
 
-    EXPECT_FALSE(is_time_restricted_skip_active(1, pre_news_start, 0, 0, sample_rate));
-    EXPECT_TRUE(is_time_restricted_skip_active(1, active_start, 0, 0, sample_rate));
-    EXPECT_TRUE(is_time_restricted_skip_active(1, active_start, 0, 4 * 60 * sample_rate, sample_rate));
-    EXPECT_FALSE(is_time_restricted_skip_active(1, active_start, 0, 5 * 60 * sample_rate, sample_rate));
-    EXPECT_TRUE(is_time_restricted_skip_active(1, half_hour_start, 0, 0, sample_rate));
-    EXPECT_TRUE(is_time_restricted_skip_active(1, half_hour_start, 0, 6 * 60 * sample_rate, sample_rate));
-    EXPECT_FALSE(is_time_restricted_skip_active(1, half_hour_start, 0, 7 * 60 * sample_rate, sample_rate));
-    EXPECT_TRUE(is_time_restricted_skip_active(1, last_window_start, 0, 0, sample_rate));
-    EXPECT_FALSE(is_time_restricted_skip_active(1, inactive_start, 60, 0, sample_rate));
-    EXPECT_FALSE(is_time_restricted_skip_active(1, late_start, 0, 0, sample_rate));
+    init_default_time_restriction_window(&default_window);
+    EXPECT_TRUE(parse_time_restriction_window("0-5,20-30,30-40", &custom_window, NULL));
+    EXPECT_TRUE(parse_time_restriction_window("58-10,28-40", &extended_window, NULL));
+
+    EXPECT_FALSE(is_time_restricted_skip_active(1, pre_news_start, 0, 0, sample_rate, &default_window));
+    EXPECT_TRUE(is_time_restricted_skip_active(1, active_start, 0, 0, sample_rate, &default_window));
+    EXPECT_TRUE(is_time_restricted_skip_active(1, active_start, 0, 4 * 60 * sample_rate, sample_rate, &default_window));
+    EXPECT_FALSE(is_time_restricted_skip_active(1, active_start, 0, 5 * 60 * sample_rate, sample_rate, &default_window));
+    EXPECT_TRUE(is_time_restricted_skip_active(1, half_hour_start, 0, 0, sample_rate, &default_window));
+    EXPECT_TRUE(is_time_restricted_skip_active(1, half_hour_start, 0, 6 * 60 * sample_rate, sample_rate, &default_window));
+    EXPECT_FALSE(is_time_restricted_skip_active(1, half_hour_start, 0, 7 * 60 * sample_rate, sample_rate, &default_window));
+    EXPECT_TRUE(is_time_restricted_skip_active(1, last_window_start, 0, 0, sample_rate, &default_window));
+    EXPECT_FALSE(is_time_restricted_skip_active(1, inactive_start, 60, 0, sample_rate, &default_window));
+    EXPECT_FALSE(is_time_restricted_skip_active(1, late_start, 0, 0, sample_rate, &default_window));
+
+    EXPECT_TRUE(is_time_restricted_skip_active(1, active_start, 0, 4 * 60 * sample_rate, sample_rate, &custom_window));
+    EXPECT_FALSE(is_time_restricted_skip_active(1, active_start, 0, 5 * 60 * sample_rate, sample_rate, &custom_window));
+    EXPECT_TRUE(is_time_restricted_skip_active(1, active_start, 0, 20 * 60 * sample_rate, sample_rate, &custom_window));
+    EXPECT_TRUE(is_time_restricted_skip_active(1, active_start, 0, 39 * 60 * sample_rate, sample_rate, &custom_window));
+    EXPECT_FALSE(is_time_restricted_skip_active(1, active_start, 0, 40 * 60 * sample_rate, sample_rate, &custom_window));
+
+    EXPECT_TRUE(is_time_restricted_skip_active(1, active_start, 0, 9 * 60 * sample_rate, sample_rate, &extended_window));
+    EXPECT_FALSE(is_time_restricted_skip_active(1, active_start, 0, 10 * 60 * sample_rate, sample_rate, &extended_window));
+    EXPECT_TRUE(is_time_restricted_skip_active(1, half_hour_start, 0, 11 * 60 * sample_rate, sample_rate, &extended_window));
+    EXPECT_FALSE(is_time_restricted_skip_active(1, half_hour_start, 0, 12 * 60 * sample_rate, sample_rate, &extended_window));
 }
 
 static void test_should_skip_mode_at_time(void)
 {
     int offset = 0;
     int sample_rate = 1000;
+    TimeRestrictionWindow default_window;
     int64_t active_start = parse_epoch_ms_or_fail("2026-06-20T05:58:00Z", &offset);
     int64_t inactive_start = parse_epoch_ms_or_fail("2026-06-20T09:10:00Z", &offset);
 
-    EXPECT_TRUE(should_skip_mode_at_time(SKIP_EVERYTHING, MODE_MUSIC, 0, 1, active_start, 60, 0, sample_rate));
-    EXPECT_TRUE(should_skip_mode_at_time(SKIP_MUSIC, MODE_MUSIC, 0, 1, active_start, 60, 0, sample_rate));
-    EXPECT_FALSE(should_skip_mode_at_time(SKIP_MUSIC, MODE_TALK, 0, 1, active_start, 60, 0, sample_rate));
-    EXPECT_TRUE(should_skip_mode_at_time(SKIP_TALK, MODE_TALK, 1, 1, active_start, 60, 0, sample_rate));
-    EXPECT_FALSE(should_skip_mode_at_time(SKIP_TALK, MODE_TALK, 1, 1, inactive_start, 60, 0, sample_rate));
-    EXPECT_TRUE(should_skip_mode_at_time(SKIP_TALK, MODE_TALK, 0, 1, inactive_start, 60, 0, sample_rate));
-    EXPECT_FALSE(should_skip_mode_at_time(SKIP_TALK, MODE_MUSIC, 1, 1, active_start, 60, 0, sample_rate));
-    EXPECT_FALSE(should_skip_mode_at_time(SKIP_TALK, MODE_NOTHING, 1, 1, active_start, 60, 0, sample_rate));
-    EXPECT_FALSE(should_skip_mode_at_time(SKIP_NOTHING, MODE_TALK, 0, 1, active_start, 60, 0, sample_rate));
+    init_default_time_restriction_window(&default_window);
+
+    EXPECT_TRUE(should_skip_mode_at_time(SKIP_EVERYTHING, MODE_MUSIC, 0, 1, active_start, 60, 0, sample_rate, &default_window));
+    EXPECT_TRUE(should_skip_mode_at_time(SKIP_MUSIC, MODE_MUSIC, 0, 1, active_start, 60, 0, sample_rate, &default_window));
+    EXPECT_FALSE(should_skip_mode_at_time(SKIP_MUSIC, MODE_TALK, 0, 1, active_start, 60, 0, sample_rate, &default_window));
+    EXPECT_TRUE(should_skip_mode_at_time(SKIP_TALK, MODE_TALK, 1, 1, active_start, 60, 0, sample_rate, &default_window));
+    EXPECT_FALSE(should_skip_mode_at_time(SKIP_TALK, MODE_TALK, 1, 1, inactive_start, 60, 0, sample_rate, &default_window));
+    EXPECT_TRUE(should_skip_mode_at_time(SKIP_TALK, MODE_TALK, 0, 1, inactive_start, 60, 0, sample_rate, &default_window));
+    EXPECT_FALSE(should_skip_mode_at_time(SKIP_TALK, MODE_MUSIC, 1, 1, active_start, 60, 0, sample_rate, &default_window));
+    EXPECT_FALSE(should_skip_mode_at_time(SKIP_TALK, MODE_NOTHING, 1, 1, active_start, 60, 0, sample_rate, &default_window));
+    EXPECT_FALSE(should_skip_mode_at_time(SKIP_NOTHING, MODE_TALK, 0, 1, active_start, 60, 0, sample_rate, &default_window));
 }
 
 static void test_fades(void)
@@ -631,6 +679,9 @@ static void test_program_main_argument_validation(void)
     char missing_zone0[] = "skipper";
     char missing_zone1[] = "-z";
     char *missing_zone[] = { missing_zone0, missing_zone1 };
+    char missing_window0[] = "skipper";
+    char missing_window1[] = "-w";
+    char *missing_window[] = { missing_window0, missing_window1 };
     char bad_time0[] = "skipper";
     char bad_time1[] = "-T";
     char bad_time2[] = "2024-02-30T00:00:00Z";
@@ -638,6 +689,9 @@ static void test_program_main_argument_validation(void)
     char bad_zone0[] = "skipper";
     char bad_zone1[] = "-z+24:00";
     char *bad_zone[] = { bad_zone0, bad_zone1 };
+    char bad_window0[] = "skipper";
+    char bad_window1[] = "-w0-60";
+    char *bad_window[] = { bad_window0, bad_window1 };
     char extra0[] = "skipper";
     char extra1[] = "extra";
     char *extra[] = { extra0, extra1 };
@@ -678,10 +732,16 @@ static void test_program_main_argument_validation(void)
     run = run_skipper_with_input(2, missing_zone, &no_input, 0, 1);
     EXPECT_TRUE(run.status != 0);
     free(run.output);
+    run = run_skipper_with_input(2, missing_window, &no_input, 0, 1);
+    EXPECT_TRUE(run.status != 0);
+    free(run.output);
     run = run_skipper_with_input(3, bad_time, &no_input, 0, 1);
     EXPECT_TRUE(run.status != 0);
     free(run.output);
     run = run_skipper_with_input(2, bad_zone, &no_input, 0, 1);
+    EXPECT_TRUE(run.status != 0);
+    free(run.output);
+    run = run_skipper_with_input(2, bad_window, &no_input, 0, 1);
     EXPECT_TRUE(run.status != 0);
     free(run.output);
     run = run_skipper_with_input(2, extra, &no_input, 0, 1);
@@ -693,6 +753,7 @@ int main(void)
 {
     test_calendar_helpers();
     test_parse_utc_offset_minutes();
+    test_parse_time_restriction_window();
     test_parse_iso8601_timestamp_ms();
     test_time_restricted_skip_window();
     test_should_skip_mode_at_time();
