@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-      - "codex/**"
 
 jobs:
   test:
@@ -24,36 +23,5 @@ jobs:
       - name: Run unit tests
         run: make test
 
-      - name: Generate CI listening source
-        run: |
-          mkdir -p ci-audio
-          ffmpeg \
-            -hide_banner \
-            -loglevel error \
-            -y \
-            -f lavfi -i "anoisesrc=color=pink:duration=20:amplitude=0.35" \
-            -f lavfi -i "sine=frequency=220:duration=20" \
-            -f lavfi -i "sine=frequency=330:duration=20" \
-            -filter_complex "[0:a]highpass=f=250,lowpass=f=3400,volume=0.45[news];[1:a][2:a]amix=inputs=2:normalize=0,volume=0.18[music];[news][music]concat=n=2:v=0:a=1,aresample=48000[a]" \
-            -map "[a]" \
-            -metadata date="2026-06-20T15:31:00+01:00" \
-            -c:a aac \
-            -b:a 128k \
-            ci-audio/source.m4a
-
-          cat > ci-audio/listening-cases.tsv <<'EOF'
-          case_id	case_type	source_key	case_start_iso	expected_programme_start_iso	offset_seconds	duration_seconds	input_start_iso	input_offset_seconds	input_duration_seconds	window	purpose
-          news_section	news	main	2026-06-20T15:31:00+01:00	2026-06-20T15:31:00+01:00	0	20	2026-06-20T15:31:00+01:00	0	20	00:00:00-00:00:20	CI scheduled news fixture
-          music_section	music	main	2026-06-20T15:52:00+01:00	2026-06-20T15:31:00+01:00	20	20	2026-06-20T15:52:00+01:00	20	20	00:00:20-00:00:40	CI non-news fixture
-          EOF
-          sed -i 's/^          //' ci-audio/listening-cases.tsv
-
       - name: Run audio validation tests
-        env:
-          MAIN_INPUT: ${{ github.workspace }}/ci-audio/source.m4a
-          CASE_MANIFEST: ${{ github.workspace }}/ci-audio/listening-cases.tsv
-          FIXTURE_DIR: ${{ github.workspace }}/ci-audio/listening-fixtures
-          FADE_BED_OFFSET_SECONDS: "20"
-          FADE_BED_DURATION_SECONDS: "20"
-          STRICT_CLASSIFIER_EXPECTATIONS: "0"
-        run: make listening-test
+        run: make audio-test

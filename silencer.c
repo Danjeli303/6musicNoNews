@@ -789,17 +789,17 @@ static void perform_detection_and_handle_transitions(const ProgramConfig *config
         if (detected_audio_mode_this_step != AUDIO_MODE_NOTHING && detected_audio_mode_this_step != state->current_audio_mode) {
             // Only perform full crossfade logic if we are actively silencing/passing
             if (config->processing_mode == PROCESSING_MODE_SILENCE_MUSIC || config->processing_mode == PROCESSING_MODE_SILENCE_TALK) {
-                int64_t samples_in_output_buffer_before_current_input_chunk = state->total_samples_processed - state->main_output_buffer_idx;
-                int transition_offset_in_buffer = (int)(state->current_transition_sample_point - samples_in_output_buffer_before_current_input_chunk);
+                int64_t first_buffered_sample = state->total_samples_processed - state->main_output_buffer_idx;
+                int transition_offset_in_buffer = (int)(state->current_transition_sample_point - first_buffered_sample);
 
-                int current_mode_is_silenced_type =
+                int current_mode_is_silenced =
                     should_silence_audio_mode_at_sample(config, state->current_audio_mode, state->current_transition_sample_point);
-                int target_mode_is_silenced_type =
+                int target_mode_is_silenced =
                     should_silence_audio_mode_at_sample(config, detected_audio_mode_this_step, state->current_transition_sample_point);
 
-                if (current_mode_is_silenced_type == target_mode_is_silenced_type) {
+                if (current_mode_is_silenced == target_mode_is_silenced) {
                     // The classification changed, but the time gate leaves the output action unchanged.
-                } else if (target_mode_is_silenced_type) { // Transition TO a silenced segment
+                } else if (target_mode_is_silenced) {
                     int fade_out_start_idx_in_buffer = transition_offset_in_buffer;
 
                     if (fade_out_start_idx_in_buffer >= 0 &&
@@ -819,12 +819,11 @@ static void perform_detection_and_handle_transitions(const ProgramConfig *config
                                 (state->main_output_buffer_idx - samples_written_this_transition) * sizeof(int16_t) * 2); 
                         state->main_output_buffer_idx -= samples_written_this_transition; 
                         if (config->verbose_level > 0 && !config->quiet_mode) fprintf(stderr, "Fade OUT to SILENCE: wrote %d, faded %d. Output buffer now %.1fs\n", fade_out_start_idx_in_buffer, state->crossfade_buffer_len_samples, (float)state->main_output_buffer_idx / config->sample_rate);
-                    } else { // Crossfade region out of bounds, log warning and switch mode directly
+                    } else {
                         if (config->verbose_level > 0 && !config->quiet_mode) fprintf(stderr, "Warning: Fade-out region out of bounds (idx %d, len %d, out_buf_idx %d). Mode switched directly.\n", fade_out_start_idx_in_buffer, state->crossfade_buffer_len_samples, state->main_output_buffer_idx);
-                        // Fallback: write any pending confirmed audio without special fade handling for this transition
-                        write_confirmed_audio_to_stdout(config, buffers, state); // Ensure buffer is managed
+                        write_confirmed_audio_to_stdout(config, buffers, state);
                     }
-                } else { // Transition FROM a silenced segment TO an AUDIBLE segment
+                } else {
                     int fade_in_start_idx_in_buffer = transition_offset_in_buffer;
 
                     if (fade_in_start_idx_in_buffer >= 0 &&
@@ -847,10 +846,9 @@ static void perform_detection_and_handle_transitions(const ProgramConfig *config
                         state->main_output_buffer_idx -= samples_written_this_transition;
                         if (config->verbose_level > 0 && !config->quiet_mode) fprintf(stderr, "Fade IN from SILENCE: silenced %d, faded %d. Output buffer now %.1fs\n", fade_in_start_idx_in_buffer, state->crossfade_buffer_len_samples, (float)state->main_output_buffer_idx / config->sample_rate);
                         if (!config->quiet_mode) fprintf (stderr, "Crossfade to %s at %i:%i\n", detected_audio_mode_this_step == AUDIO_MODE_MUSIC ? "MUSIC" : "TALK", MINS (state->samples_output_audible + state->samples_output_silenced, config->sample_rate), SECS (state->samples_output_audible + state->samples_output_silenced, config->sample_rate));
-                    } else { // Crossfade region out of bounds, log warning and switch mode directly
+                    } else {
                         if (config->verbose_level > 0 && !config->quiet_mode) fprintf(stderr, "Warning: Fade-in region out of bounds (idx %d, len %d, out_buf_idx %d). Mode switched directly.\n", fade_in_start_idx_in_buffer, state->crossfade_buffer_len_samples, state->main_output_buffer_idx);
-                        // Fallback: write any pending confirmed audio without special fade handling for this transition
-                        write_confirmed_audio_to_stdout(config, buffers, state); // Ensure buffer is managed
+                        write_confirmed_audio_to_stdout(config, buffers, state);
                     }
                 }
             } else if (!config->quiet_mode) { // Not actively silencing (e.g. -p mode), just log detection

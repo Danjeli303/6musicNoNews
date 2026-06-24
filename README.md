@@ -29,10 +29,9 @@ the recording must include that tag.
 ./skip_6music_news.sh input.m4a output_skipped_news.m4a
 ```
 
-If no input is provided, the script uses the hard-coded Gilles Peterson iPlayer
-recording path in the script. If no output is provided, it writes beside this
-repository using the input filename plus `_skipped_news.m4a`. A matching `.log`
-file is written next to the output.
+If no input is provided, the script uses its built-in default recording path. If
+no output is provided, it writes beside this repository using the input filename
+plus `_skipped_news.m4a`. A matching `.log` file is written next to the output.
 
 `silence_6music_news.sh` has the same recorded-file interface, but it runs the
 `silencer` executable instead of `skipper`. Use it when you want the newer
@@ -43,42 +42,17 @@ stream-time aware silencing path.
 ./silence_6music_news.sh input.m4a output_silenced_talk.m4a
 ```
 
-### Focused listening fixtures
-
-`listen_6music_cases.sh` generates and plays a small set of repeatable listening
-cases from local iPlayer recordings. The case manifest lives in
-`listening-cases.tsv`; generated fixtures live under `listening-fixtures/`.
+### Testing
 
 ```
-./listen_6music_cases.sh list
-./listen_6music_cases.sh check
-./listen_6music_cases.sh check-wrappers
-./listen_6music_cases.sh test-fixtures
-./listen_6music_cases.sh generate all
-./listen_6music_cases.sh logs news_section
-./listen_6music_cases.sh silencer news_section
-./listen_6music_cases.sh hls news_section
-./listen_6music_cases.sh skipper music_section
+make test
+make audio-test
 ```
 
-The harness streams clipped audio through `silencer` for quick listening, plays
-generated HLS fixtures for the non-news bed/mix path, and exports generated
-skipper `.m4a` fixtures. `news_section` is the recording section from
-`00:31:00` to `00:35:30`; `music_section` is the section from `00:52:00` to
-`01:12:00` and is also used as the non-news bed for HLS fixtures. Fixture
-generation captures verbose stderr logs so `logs CASE` can show whether audio
-was silenced or skipped. Override the local source path with `MAIN_INPUT=...`.
-Live wrapper checks are opt-in with `RUN_LIVE_CHECKS=1`.
-
-The non-interactive fixture checks can also be run through `make`:
-
-```
-make listening-test
-```
-
-This verifies the manifest and source metadata, runs the recorded wrapper smoke
-checks, regenerates the local skipper/HLS fixtures, checks fixture durations,
-and scans the generated logs for expected skip/silence decisions.
+`make test` runs the C unit tests. `make audio-test` generates a temporary audio
+source with programme metadata, checks the recorded-file wrappers, verifies
+scheduled silence and pass-through behavior in `silencer`, and confirms HLS
+segment generation. It does not use live streams.
 
 ### Live playback scripts
 
