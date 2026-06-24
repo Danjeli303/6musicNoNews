@@ -3,14 +3,14 @@
 This deployment runs two containers on one EC2 instance:
 
 - `hls-streamer`: writes a rolling AAC/HLS playlist and segments
-- `caddy`: exposes `https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8`
+- `caddy`: exposes `https://PUBLIC_HOST/hls/radio6music_noNews.m3u8`
   on ports `80` and `443`
 
 Alexa needs an HTTPS stream URL on port `443` with a trusted certificate. For
 first testing, use `sslip.io` DNS:
 
 ```
-https://EC2_PUBLIC_IP.sslip.io/hls/radio6music_noNews_fip_plex.m3u8
+https://EC2_PUBLIC_IP.sslip.io/hls/radio6music_noNews.m3u8
 ```
 
 Replace `EC2_PUBLIC_IP` with the instance public IPv4 address.
@@ -112,13 +112,13 @@ docker compose logs -f hls-streamer caddy
 The public stream URL is:
 
 ```
-https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8
+https://PUBLIC_HOST/hls/radio6music_noNews.m3u8
 ```
 
 For example:
 
 ```
-https://203.0.113.10.sslip.io/hls/radio6music_noNews_fip_plex.m3u8
+https://203.0.113.10.sslip.io/hls/radio6music_noNews.m3u8
 ```
 
 The HLS stream uses AAC segments with `HLS_AUDIO_BITRATE=128k`,
@@ -132,13 +132,13 @@ stream failure.
 From your laptop or the EC2 instance:
 
 ```
-curl -I https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8
+curl -I https://PUBLIC_HOST/hls/radio6music_noNews.m3u8
 ```
 
 For audio validation, use the `ffprobe` installed inside the hls-streamer image:
 
 ```
-docker compose exec hls-streamer ffprobe https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8
+docker compose exec hls-streamer ffprobe https://PUBLIC_HOST/hls/radio6music_noNews.m3u8
 ```
 
 You can also paste the URL into VLC or a browser.
@@ -155,7 +155,7 @@ docker compose logs caddy
 Use the stream URL as the Alexa Lambda `STREAM_URL`:
 
 ```
-STREAM_URL=https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8
+STREAM_URL=https://PUBLIC_HOST/hls/radio6music_noNews.m3u8
 ```
 
 See `alexa-skill/README.md` for the minimal skill setup.

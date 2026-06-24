@@ -7,10 +7,10 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SILENCER="$SCRIPT_DIR/silencer"
 SAMPLE_RATE=48000
 
-OUT_DIR="${OUT_DIR:-$SCRIPT_DIR/plex_radio6music_noNews_fip}"
-PLAYLIST="$OUT_DIR/radio6music_noNews_fip_plex.m3u8"
-SEGMENT_PATTERN="$OUT_DIR/radio6music_noNews_fip_%05d.ts"
-LOG="$OUT_DIR/radio6music_noNews_fip_plex.log"
+OUT_DIR="${OUT_DIR:-$SCRIPT_DIR/hls_radio6music_noNews}"
+PLAYLIST="$OUT_DIR/radio6music_noNews.m3u8"
+SEGMENT_PATTERN="$OUT_DIR/radio6music_noNews_%05d.ts"
+LOG="$OUT_DIR/radio6music_noNews_hls.log"
 
 FIP_VOLUME="${FIP_VOLUME:-0.85}"
 DUCK_THRESHOLD="${DUCK_THRESHOLD:-0.002}"
@@ -25,7 +25,7 @@ HLS_RESTART_DELAY_SECONDS="${HLS_RESTART_DELAY_SECONDS:-5}"
 usage() {
     printf 'Usage: %s [--check]\n' "$0"
     printf 'Writes a rolling HLS audio stream to: %s\n' "$PLAYLIST"
-    printf 'Set OUT_DIR=... to write the Plex-visible files elsewhere.\n'
+    printf 'Set OUT_DIR=... to write the HLS files elsewhere.\n'
 }
 
 require_command() {
@@ -71,7 +71,7 @@ mix_with_fip_filter() {
 
 prepare_output_dir() {
     mkdir -p "$OUT_DIR"
-    rm -f "$PLAYLIST" "$OUT_DIR"/radio6music_noNews_fip_*.ts "$LOG"
+    rm -f "$PLAYLIST" "$OUT_DIR"/radio6music_noNews_*.ts "$LOG"
 }
 
 ffmpeg_live_input_args() {
@@ -127,7 +127,7 @@ run_check() {
         exit 1
     fi
 
-    if ! ls "$OUT_DIR"/radio6music_noNews_fip_*.ts >/dev/null 2>&1; then
+    if ! ls "$OUT_DIR"/radio6music_noNews_*.ts >/dev/null 2>&1; then
         printf 'Error: HLS segments were not created in: %s\n' "$OUT_DIR" >&2
         exit 1
     fi
@@ -188,7 +188,7 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
     exit 0
 fi
 
-printf 'Writing Plex HLS stream to: %s\n' "$PLAYLIST"
+printf 'Writing HLS stream to: %s\n' "$PLAYLIST"
 printf 'Log: %s\n' "$LOG"
 printf 'Keep this script running while you listen.\n'
 run_pipeline_forever

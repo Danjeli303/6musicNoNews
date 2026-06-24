@@ -1,6 +1,6 @@
 'use strict';
 
-const STREAM_URL = process.env.STREAM_URL || 'https://REPLACE_WITH_PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8';
+const STREAM_URL = process.env.STREAM_URL || 'https://REPLACE_WITH_PUBLIC_HOST/hls/radio6music_noNews.m3u8';
 const STREAM_TOKEN = 'the-radio-live-stream';
 
 function audioPlayerResponse() {

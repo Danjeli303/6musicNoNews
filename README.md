@@ -94,26 +94,26 @@ This branch includes a Docker Compose deployment for EC2. It runs an HLS stream
 pipeline and Caddy HTTPS proxy. The Alexa-ready HLS stream URL is:
 
 ```
-https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8
+https://PUBLIC_HOST/hls/radio6music_noNews.m3u8
 ```
 
 For first AWS testing, `PUBLIC_HOST` can be an `sslip.io` hostname such as
 `203.0.113.10.sslip.io`. See `docs/aws-deploy.md` for the full runbook and
 `alexa-skill/README.md` for the minimal Alexa skill scaffold.
 
-`radio6music_noNews_fip_plex.sh` creates a rolling HLS playlist and `.ts`
-segments for Plex, Caddy, or another player that can read HLS files. Keep it
+`radio6music_noNews_hls.sh` creates a rolling HLS playlist and `.ts`
+segments for Caddy or another player that can read HLS files. Keep it
 running while listening; it continuously refreshes the playlist.
 
 ```
-./radio6music_noNews_fip_plex.sh --check
-./radio6music_noNews_fip_plex.sh
-OUT_DIR=/path/visible/to/plex ./radio6music_noNews_fip_plex.sh
+./radio6music_noNews_hls.sh --check
+./radio6music_noNews_hls.sh
+OUT_DIR=/path/visible/to/hls ./radio6music_noNews_hls.sh
 ```
 
-By default it writes to `plex_radio6music_noNews_fip/` in this repository. The
-main playlist is `radio6music_noNews_fip_plex.m3u8`, and logs are written to
-`radio6music_noNews_fip_plex.log`. Useful tuning variables include `OUT_DIR`,
+By default it writes to `hls_radio6music_noNews/` in this repository. The
+main playlist is `radio6music_noNews.m3u8`, and logs are written to
+`radio6music_noNews_hls.log`. Useful tuning variables include `OUT_DIR`,
 `HLS_AUDIO_BITRATE`, `HLS_TIME`, `HLS_LIST_SIZE`, `HLS_RESTART_DELAY_SECONDS`,
 `BBC_URL`, `FIP_URL`, and the FIP ducking controls listed above.
 

@@ -2,7 +2,7 @@ services:
   hls-streamer:
     build:
       context: .
-    command: ["./radio6music_noNews_fip_plex.sh"]
+    command: ["./radio6music_noNews_hls.sh"]
     restart: unless-stopped
     environment:
       BBC_URL: ${BBC_URL:-http://as-hls-ww-live.akamaized.net/pool_81827798/live/ww/bbc_6music/bbc_6music.isml/bbc_6music-audio%3d320000.norewind.m3u8}

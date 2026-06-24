@@ -11,13 +11,13 @@ variable.
 After the AWS Docker stack is running, set:
 
 ```
-STREAM_URL=https://PUBLIC_HOST/hls/radio6music_noNews_fip_plex.m3u8
+STREAM_URL=https://PUBLIC_HOST/hls/radio6music_noNews.m3u8
 ```
 
 For the temporary DNS setup, that usually looks like:
 
 ```
-STREAM_URL=https://203.0.113.10.sslip.io/hls/radio6music_noNews_fip_plex.m3u8
+STREAM_URL=https://203.0.113.10.sslip.io/hls/radio6music_noNews.m3u8
 ```
 
 Replace `203.0.113.10` with the EC2 public IPv4 address.
