@@ -37,6 +37,7 @@ require_command() {
 
 ensure_silencer() {
     if [ ! -x "$SILENCER" ]; then
+        require_command make
         make -C "$SCRIPT_DIR" silencer
     fi
 
@@ -178,7 +179,6 @@ esac
 
 require_command curl
 require_command ffmpeg
-require_command make
 ensure_silencer
 
 if [ "$CHECK_ONLY" -eq 1 ]; then

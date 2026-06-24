@@ -21,18 +21,14 @@ RUN apt-get update \
         ca-certificates \
         curl \
         ffmpeg \
-        make \
         tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY Makefile ./
-COPY *.c *.h ./
-COPY radio6music_noNews_fip.sh ./
 COPY radio6music_noNews_hls.sh ./
 COPY --from=build /app/silencer ./silencer
 
-RUN chmod +x ./radio6music_noNews_fip.sh ./radio6music_noNews_hls.sh
+RUN chmod +x ./radio6music_noNews_hls.sh
 
 CMD ["./radio6music_noNews_hls.sh"]

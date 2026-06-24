@@ -35,14 +35,14 @@ function emptyResponse() {
 }
 
 exports.handler = async function handler(event) {
-  const request = event && event.request ? event.request : {};
+  const request = event.request;
 
   if (request.type === 'LaunchRequest') {
     return audioPlayerResponse();
   }
 
   if (request.type === 'IntentRequest') {
-    const intentName = request.intent && request.intent.name;
+    const intentName = request.intent.name;
 
     if (intentName === 'PlayRadioIntent' || intentName === 'AMAZON.ResumeIntent') {
       return audioPlayerResponse();
@@ -57,7 +57,7 @@ exports.handler = async function handler(event) {
     }
   }
 
-  if (request.type && request.type.indexOf('AudioPlayer.') === 0) {
+  if (request.type.startsWith('AudioPlayer.')) {
     return emptyResponse();
   }
 
