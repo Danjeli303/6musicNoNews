@@ -936,7 +936,7 @@ static void test_detection_confirmation_logic(void)
     EXPECT_TRUE(state.raw_talk_hits > 0);
 }
 
-static void test_transition_to_silence_writes_full_fade_out(void)
+static void test_transition_to_silence_fades_from_transition_point(void)
 {
     ProgramConfig config;
     AudioBuffers buffers = { 0 };
@@ -946,7 +946,7 @@ static void test_transition_to_silence_writes_full_fade_out(void)
     float levels[8];
     int16_t main_output[16000 * 2];
     int16_t crossfade[2 * 2] = { 0 };
-    int16_t expected[201 * 2];
+    int16_t expected[202 * 2];
 
     initialize_program_config(&config);
     config.sample_rate = 1000;
@@ -961,14 +961,12 @@ static void test_transition_to_silence_writes_full_fade_out(void)
         main_output[frame * 2 + 1] = (int16_t)(-1000 - frame);
     }
 
-    for (int frame = 0; frame < 199; ++frame) {
+    for (int frame = 0; frame < 201; ++frame) {
         expected[frame * 2] = main_output[frame * 2];
         expected[frame * 2 + 1] = main_output[frame * 2 + 1];
     }
-    expected[199 * 2] = main_output[199 * 2];
-    expected[199 * 2 + 1] = main_output[199 * 2 + 1];
-    expected[200 * 2] = 0;
-    expected[200 * 2 + 1] = 0;
+    expected[201 * 2] = 0;
+    expected[201 * 2 + 1] = 0;
 
     buffers.analysis_level_buffer = levels;
     buffers.main_output_buffer = main_output;
@@ -993,8 +991,8 @@ static void test_transition_to_silence_writes_full_fade_out(void)
     EXPECT_EQ_SIZE(sizeof(expected), run.output_size);
     if (run.output)
         EXPECT_MEMEQ(expected, run.output, sizeof(expected));
-    EXPECT_EQ_INT(201, (int)state.samples_output_audible);
-    EXPECT_EQ_INT(14799, state.main_output_buffer_idx);
+    EXPECT_EQ_INT(202, (int)state.samples_output_audible);
+    EXPECT_EQ_INT(14798, state.main_output_buffer_idx);
     EXPECT_EQ_INT(AUDIO_MODE_TALK, state.current_audio_mode);
     free(run.output);
 }
@@ -1228,7 +1226,7 @@ int main(void)
     test_analyze_window_constant_and_cyclic_levels();
     test_tensor_loading_round_trip();
     test_detection_confirmation_logic();
-    test_transition_to_silence_writes_full_fade_out();
+    test_transition_to_silence_fades_from_transition_point();
     test_transition_from_silence_fades_in_new_audio();
     test_write_confirmed_audio_to_stdout_pass_and_silence();
     test_write_confirmed_audio_keepalive();

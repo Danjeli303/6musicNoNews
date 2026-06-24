@@ -5,7 +5,7 @@ CC := gcc
 utils := skipper tensor-gen bin2c silencer
 tests := skipper_tests silencer_tests
 
-.PHONY: all test clean
+.PHONY: all test listening-test clean
 
 all: $(utils)
 
@@ -33,6 +33,12 @@ silencer_tests: silencer_tests.c silencer.c biquad.c lzwlib.c $(skipper_common) 
 test: $(tests)
 	./skipper_tests
 	./silencer_tests
+
+listening-test: all
+	./listen_6music_cases.sh check
+	./listen_6music_cases.sh check-wrappers
+	./listen_6music_cases.sh generate all
+	./listen_6music_cases.sh test-fixtures
 
 clean:
 	rm -f skipper tensor-gen bin2c silencer $(tests)
