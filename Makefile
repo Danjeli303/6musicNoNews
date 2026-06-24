@@ -5,7 +5,7 @@ CC := gcc
 utils := skipper tensor-gen bin2c silencer
 tests := skipper_tests silencer_tests
 
-.PHONY: all test clean
+.PHONY: all test audio-test clean
 
 all: $(utils)
 
@@ -33,6 +33,9 @@ silencer_tests: silencer_tests.c silencer.c biquad.c lzwlib.c $(skipper_common) 
 test: $(tests)
 	./skipper_tests
 	./silencer_tests
+
+audio-test: skipper silencer
+	./audio_validation_tests.sh
 
 clean:
 	rm -f skipper tensor-gen bin2c silencer $(tests)

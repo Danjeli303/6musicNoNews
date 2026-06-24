@@ -109,6 +109,13 @@ typedef struct {
     ProgramState *state;
 } AudioWriteCall;
 
+typedef struct {
+    const ProgramConfig *config;
+    AudioBuffers *buffers;
+    ProgramState *state;
+    int iterations;
+} DetectionLoopCall;
+
 static int test_read_byte(void *context)
 {
     TestByteReader *reader = (TestByteReader *)context;
@@ -388,6 +395,16 @@ static void call_flush_remaining(void *context)
     AudioWriteCall *call = (AudioWriteCall *)context;
     ProgramConfig config = *call->config;
     flush_remaining_audio(&config, call->buffers, call->state);
+}
+
+static void call_detection_loop(void *context)
+{
+    DetectionLoopCall *call = (DetectionLoopCall *)context;
+
+    for (int i = 0; i < call->iterations; ++i) {
+        call->state->total_samples_processed += call->state->analysis_step_samples;
+        perform_detection_and_handle_transitions(call->config, call->buffers, call->state);
+    }
 }
 
 static void reset_analysis_histograms(void)
@@ -919,6 +936,129 @@ static void test_detection_confirmation_logic(void)
     EXPECT_TRUE(state.raw_talk_hits > 0);
 }
 
+static void test_transition_to_silence_fades_from_transition_point(void)
+{
+    ProgramConfig config;
+    AudioBuffers buffers = { 0 };
+    ProgramState state = { 0 };
+    DetectionLoopCall call;
+    CapturedRun run;
+    float levels[8];
+    int16_t main_output[16000 * 2];
+    int16_t crossfade[2 * 2] = { 0 };
+    int16_t expected[202 * 2];
+
+    initialize_program_config(&config);
+    config.sample_rate = 1000;
+    config.processing_mode = PROCESSING_MODE_SILENCE_TALK;
+    config.quiet_mode = 1;
+
+    for (size_t i = 0; i < sizeof(levels) / sizeof(levels[0]); ++i)
+        levels[i] = 100.0f;
+
+    for (int frame = 0; frame < 16000; ++frame) {
+        main_output[frame * 2] = (int16_t)(1000 + frame);
+        main_output[frame * 2 + 1] = (int16_t)(-1000 - frame);
+    }
+
+    for (int frame = 0; frame < 201; ++frame) {
+        expected[frame * 2] = main_output[frame * 2];
+        expected[frame * 2 + 1] = main_output[frame * 2 + 1];
+    }
+    expected[201 * 2] = 0;
+    expected[201 * 2 + 1] = 0;
+
+    buffers.analysis_level_buffer = levels;
+    buffers.main_output_buffer = main_output;
+    buffers.crossfade_buffer = crossfade;
+
+    state.current_audio_mode = AUDIO_MODE_MUSIC;
+    state.total_samples_processed = 100000;
+    state.analysis_level_buffer_len = 8;
+    state.analysis_step_samples = 200;
+    state.main_output_buffer_idx = 15000;
+    state.main_output_buffer_len = 16000;
+    state.crossfade_buffer_len_samples = 2;
+
+    memset(loaded_tensor_data, -10, sizeof(loaded_tensor_data));
+
+    call.config = &config;
+    call.buffers = &buffers;
+    call.state = &state;
+    call.iterations = AVERAGING_BUFFER_COUNT + MIN_TALK_DURATION_SECS * 1000 / ANALYSIS_STEP_MSECS - 1;
+
+    run = capture_stdout_from_call(call_detection_loop, &call);
+    EXPECT_EQ_SIZE(sizeof(expected), run.output_size);
+    if (run.output)
+        EXPECT_MEMEQ(expected, run.output, sizeof(expected));
+    EXPECT_EQ_INT(202, (int)state.samples_output_audible);
+    EXPECT_EQ_INT(14798, state.main_output_buffer_idx);
+    EXPECT_EQ_INT(AUDIO_MODE_TALK, state.current_audio_mode);
+    free(run.output);
+}
+
+static void test_transition_from_silence_fades_in_new_audio(void)
+{
+    ProgramConfig config;
+    AudioBuffers buffers = { 0 };
+    ProgramState state = { 0 };
+    DetectionLoopCall call;
+    CapturedRun run;
+    float levels[8];
+    int16_t main_output[26000 * 2];
+    int16_t crossfade[4 * 2] = { 0 };
+    int16_t expected[204 * 2] = { 0 };
+
+    initialize_program_config(&config);
+    config.sample_rate = 1000;
+    config.processing_mode = PROCESSING_MODE_SILENCE_TALK;
+    config.quiet_mode = 1;
+
+    for (size_t i = 0; i < sizeof(levels) / sizeof(levels[0]); ++i)
+        levels[i] = 100.0f;
+
+    for (int frame = 0; frame < 26000; ++frame) {
+        main_output[frame * 2] = (int16_t)(1000 + frame);
+        main_output[frame * 2 + 1] = (int16_t)(-1000 - frame);
+    }
+
+    expected[201 * 2] = (int16_t)(main_output[201 * 2] * (1.0f / 3.0f));
+    expected[201 * 2 + 1] = (int16_t)(main_output[201 * 2 + 1] * (1.0f / 3.0f));
+    expected[202 * 2] = (int16_t)(main_output[202 * 2] * (2.0f / 3.0f));
+    expected[202 * 2 + 1] = (int16_t)(main_output[202 * 2 + 1] * (2.0f / 3.0f));
+    expected[203 * 2] = main_output[203 * 2];
+    expected[203 * 2 + 1] = main_output[203 * 2 + 1];
+
+    buffers.analysis_level_buffer = levels;
+    buffers.main_output_buffer = main_output;
+    buffers.crossfade_buffer = crossfade;
+
+    state.current_audio_mode = AUDIO_MODE_TALK;
+    state.total_samples_processed = 100000;
+    state.analysis_level_buffer_len = 8;
+    state.analysis_step_samples = 200;
+    state.main_output_buffer_idx = 25000;
+    state.main_output_buffer_len = 26000;
+    state.crossfade_buffer_len_samples = 4;
+
+    memset(loaded_tensor_data, 10, sizeof(loaded_tensor_data));
+
+    call.config = &config;
+    call.buffers = &buffers;
+    call.state = &state;
+    call.iterations = AVERAGING_BUFFER_COUNT + MIN_MUSIC_DURATION_SECS * 1000 / ANALYSIS_STEP_MSECS - 1;
+
+    run = capture_stdout_from_call(call_detection_loop, &call);
+    EXPECT_EQ_SIZE(sizeof(expected), run.output_size);
+    if (run.output)
+        EXPECT_MEMEQ(expected, run.output, sizeof(expected));
+    EXPECT_EQ_INT(200, (int)state.samples_output_silenced);
+    EXPECT_EQ_INT(4, (int)state.samples_output_audible);
+    EXPECT_EQ_INT(24796, state.main_output_buffer_idx);
+    EXPECT_EQ_INT(AUDIO_MODE_MUSIC, state.current_audio_mode);
+    free(run.output);
+}
+
 static void test_write_confirmed_audio_to_stdout_pass_and_silence(void)
 {
     ProgramConfig config;
@@ -1086,6 +1226,8 @@ int main(void)
     test_analyze_window_constant_and_cyclic_levels();
     test_tensor_loading_round_trip();
     test_detection_confirmation_logic();
+    test_transition_to_silence_fades_from_transition_point();
+    test_transition_from_silence_fades_in_new_audio();
     test_write_confirmed_audio_to_stdout_pass_and_silence();
     test_write_confirmed_audio_keepalive();
     test_flush_remaining_audio();

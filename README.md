@@ -29,10 +29,9 @@ the recording must include that tag.
 ./skip_6music_news.sh input.m4a output_skipped_news.m4a
 ```
 
-If no input is provided, the script uses the hard-coded Gilles Peterson iPlayer
-recording path in the script. If no output is provided, it writes beside this
-repository using the input filename plus `_skipped_news.m4a`. A matching `.log`
-file is written next to the output.
+If no input is provided, the script uses its built-in default recording path. If
+no output is provided, it writes beside this repository using the input filename
+plus `_skipped_news.m4a`. A matching `.log` file is written next to the output.
 
 `silence_6music_news.sh` has the same recorded-file interface, but it runs the
 `silencer` executable instead of `skipper`. Use it when you want the newer
@@ -42,6 +41,18 @@ stream-time aware silencing path.
 ./silence_6music_news.sh --check input.m4a
 ./silence_6music_news.sh input.m4a output_silenced_talk.m4a
 ```
+
+### Testing
+
+```
+make test
+make audio-test
+```
+
+`make test` runs the C unit tests. `make audio-test` generates a temporary audio
+source with programme metadata, checks the recorded-file wrappers, verifies
+scheduled silence and pass-through behavior in `silencer`, and confirms HLS
+segment generation. It does not use live streams.
 
 ### Live playback scripts
 
