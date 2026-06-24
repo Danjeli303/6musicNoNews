@@ -808,18 +808,17 @@ static void perform_detection_and_handle_transitions(const ProgramConfig *config
                         fwrite(buffers->main_output_buffer, sizeof(int16_t) * 2, crossfade_start_idx_in_buffer, stdout); 
                         state->samples_output_audible += crossfade_start_idx_in_buffer; 
                         
-                        // Prepare and write the fade-out part (first half of crossfade_buffer contains the fade)
+                        // Prepare and write the full fade-out span before entering silence.
                         memcpy(buffers->crossfade_buffer, buffers->main_output_buffer + crossfade_start_idx_in_buffer * 2, state->crossfade_buffer_len_samples * sizeof(int16_t) * 2); 
                         fade_out(buffers->crossfade_buffer, state->crossfade_buffer_len_samples, 2); 
-                        fwrite(buffers->crossfade_buffer, sizeof(int16_t) * 2, state->crossfade_buffer_len_samples / 2, stdout); // Write first half of fade
-                        state->samples_output_audible += state->crossfade_buffer_len_samples / 2; 
-                        // The second half of crossfade_buffer (now faded tail) is preserved for the next audible segment.
+                        fwrite(buffers->crossfade_buffer, sizeof(int16_t) * 2, state->crossfade_buffer_len_samples, stdout);
+                        state->samples_output_audible += state->crossfade_buffer_len_samples; 
                         
-                        int samples_written_this_transition = crossfade_start_idx_in_buffer + state->crossfade_buffer_len_samples / 2;
+                        int samples_written_this_transition = crossfade_start_idx_in_buffer + state->crossfade_buffer_len_samples;
                         memmove(buffers->main_output_buffer, buffers->main_output_buffer + samples_written_this_transition * 2, 
                                 (state->main_output_buffer_idx - samples_written_this_transition) * sizeof(int16_t) * 2); 
                         state->main_output_buffer_idx -= samples_written_this_transition; 
-                        if (config->verbose_level > 0 && !config->quiet_mode) fprintf(stderr, "Fade OUT to SILENCE: wrote %d, faded %d. Output buffer now %.1fs\n", crossfade_start_idx_in_buffer, state->crossfade_buffer_len_samples / 2, (float)state->main_output_buffer_idx / config->sample_rate);
+                        if (config->verbose_level > 0 && !config->quiet_mode) fprintf(stderr, "Fade OUT to SILENCE: wrote %d, faded %d. Output buffer now %.1fs\n", crossfade_start_idx_in_buffer, state->crossfade_buffer_len_samples, (float)state->main_output_buffer_idx / config->sample_rate);
 
                     } else { // Transition FROM a silenced segment TO an AUDIBLE segment
                         // Write the silenced audio up to the start of the crossfade
