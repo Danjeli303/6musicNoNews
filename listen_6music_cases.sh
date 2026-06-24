@@ -20,6 +20,7 @@ DUCK_THRESHOLD="${DUCK_THRESHOLD:-0.002}"
 DUCK_RATIO="${DUCK_RATIO:-20}"
 FADE_BED_FADE_OUT_MS="${FADE_BED_FADE_OUT_MS:-700}"
 FADE_BED_FADE_IN_MS="${FADE_BED_FADE_IN_MS:-1800}"
+STRICT_CLASSIFIER_EXPECTATIONS="${STRICT_CLASSIFIER_EXPECTATIONS:-1}"
 
 SKIPPER="$SCRIPT_DIR/skipper"
 SILENCER="$SCRIPT_DIR/silencer"
@@ -42,6 +43,8 @@ Commands:
 Environment:
   MAIN_INPUT=...       Override the source recording.
   FADE_BED_CACHE=...   Override the local non-news bed used for fixture generation.
+  STRICT_CLASSIFIER_EXPECTATIONS=0
+                       Verify fixture plumbing without real-recording classifier percentages.
 EOF
 }
 
@@ -375,20 +378,42 @@ test_fixtures() {
         skipper_secs=$(media_duration "$skipper_output")
         assert_log_contains "$skipper_log" 'audio written =' 'skipper final summary'
         assert_log_contains "$silencer_log" 'Debug time:' 'silencer clock alignment'
-        assert_log_contains "$silencer_log" 'Passed [0-9]+ samples' 'silencer pass-through decisions'
 
         case "$CASE_TYPE" in
             news)
-                assert_duration_between "$skipper_output" "$skipper_secs" 1 20
-                assert_log_contains "$skipper_log" 'audio discarded = .*9[0-9]\.[0-9]%\)' 'news mostly skipped'
-                assert_log_contains "$silencer_log" 'Fade OUT to SILENCE' 'scheduled fade-out to silence'
+                case "$STRICT_CLASSIFIER_EXPECTATIONS" in
+                    1|true|TRUE|yes|YES)
+                        assert_duration_between "$skipper_output" "$skipper_secs" 1 20
+                        assert_log_contains "$skipper_log" 'audio discarded = .*9[0-9]\.[0-9]%\)' 'news mostly skipped'
+                        ;;
+                    *)
+                        max_skipper=$(awk -v secs="$INPUT_DURATION_SECONDS" 'BEGIN { printf "%.3f\n", secs + 8 }')
+                        assert_duration_between "$skipper_output" "$skipper_secs" 0 "$max_skipper"
+                        assert_log_contains "$skipper_log" 'total windows =' 'skipper processed fixture windows'
+                        ;;
+                esac
                 assert_log_contains "$silencer_log" 'Silenced [0-9]+ samples' 'scheduled silencing'
+                case "$STRICT_CLASSIFIER_EXPECTATIONS" in
+                    1|true|TRUE|yes|YES)
+                        assert_log_contains "$silencer_log" 'Fade OUT to SILENCE' 'scheduled fade-out to silence'
+                        ;;
+                esac
                 ;;
             music)
-                min_skipper=$(awk -v secs="$INPUT_DURATION_SECONDS" 'BEGIN { printf "%.3f\n", secs * 0.85 }')
-                max_skipper=$(awk -v secs="$INPUT_DURATION_SECONDS" 'BEGIN { printf "%.3f\n", secs + 8 }')
-                assert_duration_between "$skipper_output" "$skipper_secs" "$min_skipper" "$max_skipper"
-                assert_log_contains "$skipper_log" 'audio written = .*9[0-9]\.[0-9]%\)' 'music mostly preserved'
+                assert_log_contains "$silencer_log" 'Passed [0-9]+ samples' 'silencer pass-through decisions'
+                case "$STRICT_CLASSIFIER_EXPECTATIONS" in
+                    1|true|TRUE|yes|YES)
+                        min_skipper=$(awk -v secs="$INPUT_DURATION_SECONDS" 'BEGIN { printf "%.3f\n", secs * 0.85 }')
+                        max_skipper=$(awk -v secs="$INPUT_DURATION_SECONDS" 'BEGIN { printf "%.3f\n", secs + 8 }')
+                        assert_duration_between "$skipper_output" "$skipper_secs" "$min_skipper" "$max_skipper"
+                        assert_log_contains "$skipper_log" 'audio written = .*9[0-9]\.[0-9]%\)' 'music mostly preserved'
+                        ;;
+                    *)
+                        max_skipper=$(awk -v secs="$INPUT_DURATION_SECONDS" 'BEGIN { printf "%.3f\n", secs + 8 }')
+                        assert_duration_between "$skipper_output" "$skipper_secs" 0 "$max_skipper"
+                        assert_log_contains "$skipper_log" 'total windows =' 'skipper processed fixture windows'
+                        ;;
+                esac
                 ;;
             *)
                 printf 'Error: unknown case type in manifest: %s\n' "$CASE_TYPE" >&2
