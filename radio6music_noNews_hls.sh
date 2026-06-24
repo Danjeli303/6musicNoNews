@@ -20,7 +20,8 @@ FIP_FADE_IN_MS="${FIP_FADE_IN_MS:-1800}"
 HLS_AUDIO_BITRATE="${HLS_AUDIO_BITRATE:-128k}"
 HLS_TIME="${HLS_TIME:-6}"
 HLS_LIST_SIZE="${HLS_LIST_SIZE:-20}"
-HLS_RESTART_DELAY_SECONDS="${HLS_RESTART_DELAY_SECONDS:-5}"
+HLS_RESTART_DELAY_SECONDS="${HLS_RESTART_DELAY_SECONDS:-1}"
+HLS_CLEAN_START="${HLS_CLEAN_START:-0}"
 
 usage() {
     printf 'Usage: %s [--check]\n' "$0"
@@ -70,8 +71,12 @@ mix_with_fip_filter() {
     printf '[bbc][fipduck]amix=inputs=2:duration=first:normalize=0:dropout_transition=0,alimiter=limit=0.95,aresample=async=1000:first_pts=0[out]'
 }
 
-prepare_output_dir() {
+ensure_output_dir() {
     mkdir -p "$OUT_DIR"
+}
+
+clean_output_dir() {
+    ensure_output_dir
     rm -f "$PLAYLIST" "$OUT_DIR"/radio6music_noNews_*.ts "$LOG"
 }
 
@@ -114,13 +119,14 @@ run_pipeline() {
       -f hls \
       -hls_time "$HLS_TIME" \
       -hls_list_size "$HLS_LIST_SIZE" \
-      -hls_flags delete_segments+program_date_time+omit_endlist \
+      -hls_start_number_source epoch \
+      -hls_flags append_list+delete_segments+program_date_time+omit_endlist+temp_file \
       -hls_segment_filename "$SEGMENT_PATTERN" \
       "$PLAYLIST" 2>>"$LOG"
 }
 
 run_check() {
-    prepare_output_dir
+    clean_output_dir
     run_pipeline 12
 
     if [ ! -s "$PLAYLIST" ]; then
@@ -148,8 +154,7 @@ run_pipeline_forever() {
         printf 'HLS audio bitrate: %s\n' "$HLS_AUDIO_BITRATE" >&2
         printf 'HLS segment length: %s seconds\n' "$HLS_TIME" >&2
         printf 'HLS list size: %s segments\n' "$HLS_LIST_SIZE" >&2
-
-        prepare_output_dir
+        ensure_output_dir
         if run_pipeline; then
             printf 'HLS pipeline ended; restarting in %s seconds.\n' "$HLS_RESTART_DELAY_SECONDS" >&2
         else
@@ -191,4 +196,9 @@ fi
 printf 'Writing HLS stream to: %s\n' "$PLAYLIST"
 printf 'Log: %s\n' "$LOG"
 printf 'Keep this script running while you listen.\n'
+case "$HLS_CLEAN_START" in
+    1|true|TRUE|yes|YES)
+        clean_output_dir
+        ;;
+esac
 run_pipeline_forever

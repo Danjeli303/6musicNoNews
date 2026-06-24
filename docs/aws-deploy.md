@@ -125,7 +125,10 @@ The HLS stream uses AAC segments with `HLS_AUDIO_BITRATE=128k`,
 `HLS_TIME=6`, and `HLS_LIST_SIZE=20` by default. It is served directly by Caddy
 from the shared `hls_data` volume. Set `HLS_RESTART_DELAY_SECONDS` in `.env` if
 you want a longer or shorter pause between restart attempts after an upstream
-stream failure.
+stream failure; the default is `1` second so transient failures recover quickly.
+Restarts keep the last good playlist and segments in place for continuity. Set
+`HLS_CLEAN_START=1` only when you intentionally want the container to discard
+the existing HLS window at startup.
 
 ## 5. Smoke Tests
 

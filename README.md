@@ -112,7 +112,10 @@ By default it writes to `hls_radio6music_noNews/` in this repository. The
 main playlist is `radio6music_noNews.m3u8`, and logs are written to
 `radio6music_noNews_hls.log`. Useful tuning variables include `OUT_DIR`,
 `HLS_AUDIO_BITRATE`, `HLS_TIME`, `HLS_LIST_SIZE`, `HLS_RESTART_DELAY_SECONDS`,
-`BBC_URL`, `FIP_URL`, and the FIP ducking controls listed above.
+`HLS_CLEAN_START`, `BBC_URL`, `FIP_URL`, and the FIP ducking controls listed
+above. Normal restarts preserve the last good playlist and segments so players
+can keep buffering while the pipeline reconnects. Set `HLS_CLEAN_START=1` only
+when you intentionally want to discard the existing HLS window at startup.
 
 ## About Skipper
 
