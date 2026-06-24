@@ -19,19 +19,29 @@ stream.
 
 ### Recorded programme scripts
 
-`skip_6music_news.sh` processes a recorded `.m4a` file through `skipper` and
-writes a new AAC `.m4a` file with detected talk/news skipped. It reads the
-programme start time from the input file's `date` metadata using `ffprobe`, so
-the recording must include that tag.
+`skip_6music_news.sh` processes a recorded audio file through `skipper` and
+writes a new file with detected talk/news skipped. With one input argument, it
+writes beside the input using the same extension plus `_newsskip` before the
+extension, for example `example.m4a` becomes `example_newsskip.m4a`. If you pass
+an explicit output path, its extension must match the input extension so `ffmpeg`
+exports the same container family. The script reads the programme start time
+from the input file's `date` metadata using `ffprobe`, so the recording must
+include that tag.
 
 ```
 ./skip_6music_news.sh --check input.m4a
-./skip_6music_news.sh input.m4a output_skipped_news.m4a
+./skip_6music_news.sh input.m4a
+./skip_6music_news.sh -w 58-10,28-40 input.m4a
+./skip_6music_news.sh input.mp3 output_newsskip.mp3
 ```
 
-If no input is provided, the script uses its built-in default recording path. If
-no output is provided, it writes beside this repository using the input filename
-plus `_skipped_news.m4a`. A matching `.log` file is written next to the output.
+If no input is provided, the script uses its built-in default recording path.
+During conversion it prints the percentage of the input file processed. A
+matching `.log` file is written next to the output. The wrapper currently
+supports strict output for AAC/ALAC MP4-family files, MP3, FLAC, Opus/Vorbis
+OGG, and PCM WAV. It runs `skipper` with a wrapper default news window of
+`0-5,30-40`; use `-w`/`--window` with comma-separated minute ranges to override
+that for later or unusual bulletin timings.
 
 `silence_6music_news.sh` has the same recorded-file interface, but it runs the
 `silencer` executable instead of `skipper`. Use it when you want the newer
@@ -47,12 +57,17 @@ stream-time aware silencing path.
 ```
 make test
 make audio-test
+make sample-recording-test
 ```
 
 `make test` runs the C unit tests. `make audio-test` generates a temporary audio
 source with programme metadata, checks the recorded-file wrappers, verifies
-scheduled silence and pass-through behavior in `silencer`, and confirms HLS
-segment generation. It does not use live streams.
+single-file conversion metadata/format preservation, verifies scheduled silence
+and pass-through behavior in `silencer`, and confirms HLS segment generation. It
+does not use live streams. `make sample-recording-test` is a local opt-in check
+for minutes 28-37 of a real iPlayer recording; run it with
+`RUN_LOCAL_SAMPLE_TEST=1` for the default local path, or set
+`SAMPLE_RECORDING=/path/to/file.m4a`.
 
 ### Live playback scripts
 

@@ -67,7 +67,8 @@ static const char *usage =
 "                            = (raise or lower talk threshold +/- 99 points)\n"
 "           -T <iso-time>    = stream start time (e.g. HLS PROGRAM-DATE-TIME)\n"
 "           -v[<n>]          = set verbosity + [rate in seconds]\n"
-"           -x               = with -t, restricts talk skipping to -2/+5 min around hour/half-hour\n"
+"           -w<ranges>       = with -x, active minute ranges (default 58-5,28-35)\n"
+"           -x               = with -t, restricts talk skipping to :58-:05 and :28-:35 by default\n"
 "           -z<+/-HH:MM>     = UTC offset for stream time checks (e.g. +01:00)\n\n"
 " Web:      Visit www.github.com/dbry/skipper for latest version and info\n\n";
 
@@ -95,8 +96,8 @@ static void fade_out (int16_t *samples, int num_samples, int stride);
 static void fade_in (int16_t *samples, int num_samples, int stride);
 
 static int analyze_window (float *levels, long sample_index, int num_samples, int sample_rate);
-static int is_time_restricted_skip_active (int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate);
-static int should_skip_mode_at_time (int skip_mode, int mode, int time_restricted_skip_enabled, int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate);
+static int is_time_restricted_skip_active (int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window);
+static int should_skip_mode_at_time (int skip_mode, int mode, int time_restricted_skip_enabled, int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window);
 static void display_histogram (const char *name, int *histogram, int count);
 static void display_analysis_results (void);
 
@@ -107,14 +108,14 @@ static int verbose, quiet;
 #define MINS(s,r) ((int)((s)/((r)*60)))
 #define SECS(s,r) ((int)(((s)/(r))%60))
 
-static int is_time_restricted_skip_active (int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate)
+static int is_time_restricted_skip_active (int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window)
 {
-    return is_time_restricted_window_active (stream_time_enabled, stream_start_epoch_ms,
-                                             stream_time_utc_offset_minutes, sample_index,
-                                             sample_rate);
+    return is_time_restricted_window_active_with_config (stream_time_enabled, stream_start_epoch_ms,
+                                                        stream_time_utc_offset_minutes, sample_index,
+                                                        sample_rate, time_restriction_window);
 }
 
-static int should_skip_mode_at_time (int skip_mode, int mode, int time_restricted_skip_enabled, int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate)
+static int should_skip_mode_at_time (int skip_mode, int mode, int time_restricted_skip_enabled, int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window)
 {
     if (skip_mode == SKIP_EVERYTHING)
         return 1;
@@ -123,7 +124,7 @@ static int should_skip_mode_at_time (int skip_mode, int mode, int time_restricte
         return mode == MODE_MUSIC;
 
     if (skip_mode == SKIP_TALK && mode == MODE_TALK) {
-        if (time_restricted_skip_enabled && !is_time_restricted_skip_active (stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, sample_index, sample_rate))
+        if (time_restricted_skip_enabled && !is_time_restricted_skip_active (stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, sample_index, sample_rate, time_restriction_window))
             return 0;
 
         return 1;
@@ -139,7 +140,7 @@ int main (int argc, char **argv)
     int level_buffer_index = 0, output_buffer_index = 0, num_windows = 0, step_samples;
     int level_buff_len, output_buff_len, crossfade_buff_len, ring_buff_len, results_buffer_count = 0;
     int music_hits = 0, talk_hits = 0, analysis_output_file_follows = 0, tensor_input_file_follows = 0;
-    int stream_start_time_follows = 0, stream_time_utc_offset_follows = 0, time_restricted_skip_enabled = 0;
+    int stream_start_time_follows = 0, stream_time_utc_offset_follows = 0, time_restriction_window_follows = 0, time_restricted_skip_enabled = 0;
     int stream_time_enabled = 0, stream_time_utc_offset_minutes = 0, stream_time_utc_offset_is_set = 0;
     int current_mode = 0, music_up_counter = 0, talk_up_counter = 0, pend_up_counter = 0, input_samples;
     int64_t num_samples = 0, transition_sample = 0, confirmed_sample = 0, samples_discarded = 0, samples_written = 0;
@@ -151,8 +152,11 @@ int main (int argc, char **argv)
     signed char results_buffer [AVERAGE_COUNT];
     Biquad lowpass [2], highpass [2];
     BiquadCoefficients coefficients;
+    TimeRestrictionWindow time_restriction_window;
     uint32_t random = 0x31415926;
     double level = 0.0;
+
+    init_default_time_restriction_window (&time_restriction_window);
 
     if (argc == 1) {
         fprintf (stderr, sign_on, VERSION);
@@ -301,6 +305,20 @@ int main (int argc, char **argv)
                         --*argv;
                         break;
 
+                    case 'W': case 'w':
+                        if ((*argv) [1]) {
+                            if (!parse_time_restriction_window (*argv + 1, &time_restriction_window, NULL)) {
+                                fprintf (stderr, "\nerror: invalid time restriction window specified with -w (expected ranges like 58-10,28-40)\n");
+                                return -1;
+                            }
+
+                            *argv += strlen (*argv) - 1;
+                        }
+                        else
+                            time_restriction_window_follows = 1;
+
+                        break;
+
                     case 'X': case 'x':
                         time_restricted_skip_enabled = 1;
                         break;
@@ -356,6 +374,14 @@ int main (int argc, char **argv)
             stream_time_utc_offset_is_set = 1;
             stream_time_utc_offset_follows = 0;
         }
+        else if (time_restriction_window_follows) {
+            if (!parse_time_restriction_window (*argv, &time_restriction_window, NULL)) {
+                fprintf (stderr, "\nerror: invalid time restriction window specified with -w (expected ranges like 58-10,28-40)\n");
+                return -1;
+            }
+
+            time_restriction_window_follows = 0;
+        }
         else {
             fprintf (stderr, "\nextra unknown argument: %s !\n", *argv);
             return 1;
@@ -379,6 +405,11 @@ int main (int argc, char **argv)
 
     if (stream_time_utc_offset_follows) {
         fprintf (stderr, "\nerror: -z requires a UTC offset like +01:00\n");
+        return 1;
+    }
+
+    if (time_restriction_window_follows) {
+        fprintf (stderr, "\nerror: -w requires minute ranges like 58-10,28-40\n");
         return 1;
     }
 
@@ -589,9 +620,11 @@ int main (int argc, char **argv)
                             int audio_offset = transition_sample - num_samples + output_buffer_index;
                             int crossfade_start = audio_offset - crossfade_buff_len / 2;
                             int current_output_skipped = should_skip_mode_at_time (skip_mode, current_mode, time_restricted_skip_enabled,
-                                stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, transition_sample, sample_rate);
+                                stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, transition_sample, sample_rate,
+                                &time_restriction_window);
                             int detected_output_skipped = should_skip_mode_at_time (skip_mode, detected_mode, time_restricted_skip_enabled,
-                                stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, transition_sample, sample_rate);
+                                stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, transition_sample, sample_rate,
+                                &time_restriction_window);
 
                             if (current_output_skipped == detected_output_skipped) {
                                 // The classification changed, but the output stays either fully passed or fully skipped.
@@ -668,7 +701,8 @@ int main (int argc, char **argv)
 
                 int64_t available_start_sample = num_samples - output_buffer_index;
                 int current_mode_skipped = should_skip_mode_at_time (skip_mode, current_mode, time_restricted_skip_enabled,
-                    stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, available_start_sample, sample_rate);
+                    stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, available_start_sample, sample_rate,
+                    &time_restriction_window);
 
                 if (keepalive && available_samples > crossfade_buff_len * 2 && current_mode_skipped) {
                     int crossfade_start = available_samples / 2 - crossfade_buff_len;
@@ -732,7 +766,8 @@ int main (int argc, char **argv)
     if (output_buffer_index) {
         int64_t output_start_sample = num_samples - output_buffer_index;
         int write_data = !should_skip_mode_at_time (skip_mode, current_mode, time_restricted_skip_enabled,
-            stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, output_start_sample, sample_rate);
+            stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, output_start_sample, sample_rate,
+            &time_restriction_window);
 
         if (write_data) {
             fwrite (output_buffer, sizeof (int16_t) * 2, output_buffer_index, stdout);
