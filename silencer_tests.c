@@ -83,6 +83,38 @@ static int64_t parse_epoch_ms_or_fail(const char *time_text, int *offset_minutes
     return epoch_ms;
 }
 
+static int write_schedule_fixture(char *path)
+{
+    const char *schedule_text =
+        "[window]\n"
+        "before_minutes=2\n"
+        "after_minutes=5\n"
+        "\n"
+        "[weekday]\n"
+        "times=06:30,07:00\n"
+        "\n"
+        "[weekend]\n"
+        "times=07:30\n";
+    int fd = mkstemp(path);
+    FILE *file;
+
+    EXPECT_TRUE(fd >= 0);
+    if (fd < 0)
+        return 0;
+
+    file = fdopen(fd, "w");
+    EXPECT_TRUE(file != NULL);
+    if (!file) {
+        close(fd);
+        unlink(path);
+        return 0;
+    }
+
+    EXPECT_TRUE(fputs(schedule_text, file) >= 0);
+    EXPECT_TRUE(fclose(file) == 0);
+    return 1;
+}
+
 typedef struct {
     const unsigned char *data;
     size_t size;
@@ -448,6 +480,7 @@ static void test_default_config(void)
     EXPECT_EQ_INT(OUTPUT_AUDIO, config.right_debug_output_mode);
     EXPECT_EQ_INT(0, config.time_restricted_silence_enabled);
     EXPECT_EQ_INT(0, config.stream_time_enabled);
+    EXPECT_EQ_INT(0, config.time_restriction_window.schedule_enabled);
     EXPECT_EQ_INT(2, config.time_restriction_window.range_count);
     EXPECT_EQ_INT(58, config.time_restriction_window.ranges[0].start_minute);
     EXPECT_EQ_INT(5, config.time_restriction_window.ranges[0].end_minute);
@@ -574,6 +607,36 @@ static void test_command_line_parsing(void)
     EXPECT_EQ_INT(30, config.time_restriction_window.ranges[2].start_minute);
     EXPECT_EQ_INT(40, config.time_restriction_window.ranges[2].end_minute);
     EXPECT_EQ_INT(1, config.quiet_mode);
+}
+
+static void test_command_line_parsing_accepts_schedule_file(void)
+{
+    ProgramConfig config;
+    char path[] = "/tmp/silencer_schedule_test_XXXXXX";
+    char *argv[] = {
+        "silencer",
+        "-t",
+        "-x",
+        "-s11025",
+        "-T",
+        "2026-06-19T06:28:00Z",
+        "-w",
+        path
+    };
+
+    if (!write_schedule_fixture(path))
+        return;
+
+    initialize_program_config(&config);
+    EXPECT_TRUE(parse_command_line_arguments((int)(sizeof(argv) / sizeof(argv[0])), argv, &config));
+    EXPECT_EQ_INT(1, config.time_restriction_window.schedule_enabled);
+    EXPECT_EQ_INT(2, config.time_restriction_window.before_minutes);
+    EXPECT_EQ_INT(5, config.time_restriction_window.after_minutes);
+    EXPECT_EQ_INT(2, config.time_restriction_window.weekday_time_count);
+    EXPECT_EQ_INT(1, config.time_restricted_silence_enabled);
+    EXPECT_TRUE(is_time_restricted_silence_active_at_sample(&config, 0));
+
+    unlink(path);
 }
 
 static void test_command_line_parsing_rejects_invalid_inputs(void)
@@ -1246,6 +1309,7 @@ int main(void)
     test_parse_iso8601_timestamp_ms();
     test_format_epoch_ms_with_utc_offset();
     test_command_line_parsing();
+    test_command_line_parsing_accepts_schedule_file();
     test_command_line_parsing_rejects_invalid_inputs();
     test_time_restricted_silence_window();
     test_should_silence_audio_mode_at_sample();

@@ -76,7 +76,8 @@ static const char *usage =
 "           -t[<n>]          = silence talk, with optional threshold offset\n" //
 "                            = (raise or lower talk threshold +/- 99 points)\n"
 "           -T <iso-time>    = stream start time (e.g. HLS PROGRAM-DATE-TIME)\n" //
-"           -w<ranges>       = with -x, active minute ranges (default 58-5,28-35)\n"
+"           -w<ranges|file>  = with -x, active minute ranges or INI schedule file\n"
+"                            = (default ranges: 58-5,28-35)\n"
 "           -x               = with -t, enables time-restricted talk silencing (6am-10pm, :58-:05 and :28-:35 by default)\n" // New option
 "           -v[<n>]          = set verbosity + [rate in seconds]\n" //
 "           -z<+/-HH:MM>     = UTC offset for stream debug time display (e.g. +01:00)\n\n" //
@@ -328,8 +329,8 @@ static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *co
             if (!parse_stream_time_utc_offset_option(config, current_arg_str)) return 0;
             stream_time_utc_offset_follows = 0;
         } else if (time_restriction_window_follows) {
-            if (!parse_time_restriction_window(current_arg_str, &config->time_restriction_window, NULL)) {
-                fprintf(stderr, "\nError: invalid -w time restriction window \"%s\" (expected ranges like 58-10,28-40)\n", current_arg_str);
+            if (!parse_time_restriction_argument(current_arg_str, &config->time_restriction_window)) {
+                fprintf(stderr, "\nError: invalid -w value \"%s\" (expected ranges like 58-10,28-40 or an INI schedule file)\n", current_arg_str);
                 return 0;
             }
             time_restriction_window_follows = 0;
@@ -399,8 +400,8 @@ static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *co
                         break;
                     case 'w':
                         if (*next_char_in_option) {
-                            if (!parse_time_restriction_window(next_char_in_option, &config->time_restriction_window, NULL)) {
-                                fprintf(stderr, "\nError: invalid -w time restriction window \"%s\" (expected ranges like 58-10,28-40)\n", next_char_in_option);
+                            if (!parse_time_restriction_argument(next_char_in_option, &config->time_restriction_window)) {
+                                fprintf(stderr, "\nError: invalid -w value \"%s\" (expected ranges like 58-10,28-40 or an INI schedule file)\n", next_char_in_option);
                                 return 0;
                             }
                             option_char_ptr = current_arg_str + strlen(current_arg_str) - 1;
@@ -442,7 +443,7 @@ static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *co
     if (tensor_input_file_follows) { fprintf(stderr, "\nError: -d requires a tensor filename\n"); return 0; }
     if (stream_start_time_follows) { fprintf(stderr, "\nError: -T requires an ISO-8601 stream start time\n"); return 0; }
     if (stream_time_utc_offset_follows) { fprintf(stderr, "\nError: -z requires a UTC offset like +01:00\n"); return 0; }
-    if (time_restriction_window_follows) { fprintf(stderr, "\nError: -w requires minute ranges like 58-10,28-40\n"); return 0; }
+    if (time_restriction_window_follows) { fprintf(stderr, "\nError: -w requires minute ranges or an INI schedule file\n"); return 0; }
     return 1; // Success
 }
 

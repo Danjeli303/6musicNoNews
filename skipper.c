@@ -67,7 +67,8 @@ static const char *usage =
 "                            = (raise or lower talk threshold +/- 99 points)\n"
 "           -T <iso-time>    = stream start time (e.g. HLS PROGRAM-DATE-TIME)\n"
 "           -v[<n>]          = set verbosity + [rate in seconds]\n"
-"           -w<ranges>       = with -x, active minute ranges (default 58-5,28-35)\n"
+"           -w<ranges|file>  = with -x, active minute ranges or INI schedule file\n"
+"                            = (default ranges: 58-5,28-35)\n"
 "           -x               = with -t, restricts talk skipping to :58-:05 and :28-:35 by default\n"
 "           -z<+/-HH:MM>     = UTC offset for stream time checks (e.g. +01:00)\n\n"
 " Web:      Visit www.github.com/dbry/skipper for latest version and info\n\n";
@@ -307,8 +308,8 @@ int main (int argc, char **argv)
 
                     case 'W': case 'w':
                         if ((*argv) [1]) {
-                            if (!parse_time_restriction_window (*argv + 1, &time_restriction_window, NULL)) {
-                                fprintf (stderr, "\nerror: invalid time restriction window specified with -w (expected ranges like 58-10,28-40)\n");
+                            if (!parse_time_restriction_argument (*argv + 1, &time_restriction_window)) {
+                                fprintf (stderr, "\nerror: invalid -w value (expected ranges like 58-10,28-40 or an INI schedule file)\n");
                                 return -1;
                             }
 
@@ -375,8 +376,8 @@ int main (int argc, char **argv)
             stream_time_utc_offset_follows = 0;
         }
         else if (time_restriction_window_follows) {
-            if (!parse_time_restriction_window (*argv, &time_restriction_window, NULL)) {
-                fprintf (stderr, "\nerror: invalid time restriction window specified with -w (expected ranges like 58-10,28-40)\n");
+            if (!parse_time_restriction_argument (*argv, &time_restriction_window)) {
+                fprintf (stderr, "\nerror: invalid -w value (expected ranges like 58-10,28-40 or an INI schedule file)\n");
                 return -1;
             }
 
@@ -409,7 +410,7 @@ int main (int argc, char **argv)
     }
 
     if (time_restriction_window_follows) {
-        fprintf (stderr, "\nerror: -w requires minute ranges like 58-10,28-40\n");
+        fprintf (stderr, "\nerror: -w requires minute ranges or an INI schedule file\n");
         return 1;
     }
 

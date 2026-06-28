@@ -13,6 +13,7 @@
 #include <stddef.h>
 
 #define TIME_RESTRICTION_MAX_RANGES 8
+#define TIME_RESTRICTION_MAX_SCHEDULE_TIMES 32
 
 typedef struct {
     int start_minute;
@@ -22,12 +23,21 @@ typedef struct {
 typedef struct {
     TimeRestrictionRange ranges [TIME_RESTRICTION_MAX_RANGES];
     int range_count;
+    int schedule_enabled;
+    int before_minutes;
+    int after_minutes;
+    int weekday_times [TIME_RESTRICTION_MAX_SCHEDULE_TIMES];
+    int weekday_time_count;
+    int weekend_times [TIME_RESTRICTION_MAX_SCHEDULE_TIMES];
+    int weekend_time_count;
 } TimeRestrictionWindow;
 
 void init_default_time_restriction_window (TimeRestrictionWindow *window);
 int parse_iso8601_timestamp_ms (const char *time_text, int64_t *epoch_ms_out, int *utc_offset_minutes_out);
 int parse_utc_offset_minutes (const char *offset_text, int *utc_offset_minutes_out, const char **end_ptr_out);
 int parse_time_restriction_window (const char *window_text, TimeRestrictionWindow *window_out, const char **end_ptr_out);
+int parse_news_schedule_file (const char *path, TimeRestrictionWindow *window_out);
+int parse_time_restriction_argument (const char *window_text, TimeRestrictionWindow *window_out);
 int format_epoch_ms_with_utc_offset (int64_t epoch_ms, int utc_offset_minutes, char *buffer, size_t buffer_size);
 int is_leap_year (int year);
 int days_in_month (int year, int month);

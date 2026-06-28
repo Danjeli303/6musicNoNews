@@ -9,18 +9,29 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 #include "skipper_time.h"
 
+#define MINUTES_PER_DAY 1440
 #define MAX_UTC_OFFSET_MINUTES (23 * 60 + 59)
 
 static int parse_fixed_digits (const char **text_ptr, int digit_count, int *value_out);
 static int minute_is_valid (int minute);
 static int minute_in_wrapping_range (int minute, int start_minute, int end_minute);
+static int minute_of_day_in_wrapping_range (int minute, int start_minute, int end_minute);
+static int parse_nonnegative_minutes (const char *text, int *value_out);
+static int parse_time_of_day_minutes (const char *text, int *minute_of_day_out);
+static int parse_schedule_times (const char *text, int *times, int *time_count);
+static int ascii_equals_ignore_case (const char *left, const char *right);
+static char *trim_spaces (char *text);
+static void strip_inline_comment (char *text);
+static int is_news_schedule_active (const TimeRestrictionWindow *window, const struct tm *time_info);
 
 void init_default_time_restriction_window (TimeRestrictionWindow *window)
 {
+    memset (window, 0, sizeof (*window));
     window->range_count = 2;
     window->ranges [0].start_minute = 58;
     window->ranges [0].end_minute = 5;
@@ -214,6 +225,128 @@ int parse_time_restriction_window (const char *window_text, TimeRestrictionWindo
     return *cursor == '\0';
 }
 
+int parse_news_schedule_file (const char *path, TimeRestrictionWindow *window_out)
+{
+    enum { SECTION_NONE, SECTION_WINDOW, SECTION_WEEKDAY, SECTION_WEEKEND };
+    TimeRestrictionWindow parsed_window = { 0 };
+    char line [2048];
+    int section = SECTION_NONE, saw_before = 0, saw_after = 0;
+    FILE *file = fopen (path, "r");
+
+    if (!file)
+        return 0;
+
+    parsed_window.schedule_enabled = 1;
+
+    while (fgets (line, sizeof (line), file)) {
+        char *cursor, *equals;
+        size_t length = strlen (line);
+
+        if (length == sizeof (line) - 1 && line [length - 1] != '\n' && !feof (file)) {
+            fclose (file);
+            return 0;
+        }
+
+        strip_inline_comment (line);
+        cursor = trim_spaces (line);
+
+        if (!*cursor)
+            continue;
+
+        length = strlen (cursor);
+
+        if (cursor [0] == '[') {
+            if (length < 3 || cursor [length - 1] != ']') {
+                fclose (file);
+                return 0;
+            }
+
+            cursor [length - 1] = '\0';
+            cursor = trim_spaces (cursor + 1);
+
+            if (ascii_equals_ignore_case (cursor, "window"))
+                section = SECTION_WINDOW;
+            else if (ascii_equals_ignore_case (cursor, "weekday"))
+                section = SECTION_WEEKDAY;
+            else if (ascii_equals_ignore_case (cursor, "weekend"))
+                section = SECTION_WEEKEND;
+            else {
+                fclose (file);
+                return 0;
+            }
+
+            continue;
+        }
+
+        equals = strchr (cursor, '=');
+
+        if (!equals) {
+            fclose (file);
+            return 0;
+        }
+
+        *equals = '\0';
+        char *key = trim_spaces (cursor);
+        char *value = trim_spaces (equals + 1);
+
+        if (section == SECTION_WINDOW) {
+            if (ascii_equals_ignore_case (key, "before_minutes") || ascii_equals_ignore_case (key, "before")) {
+                if (!parse_nonnegative_minutes (value, &parsed_window.before_minutes)) {
+                    fclose (file);
+                    return 0;
+                }
+                saw_before = 1;
+            }
+            else if (ascii_equals_ignore_case (key, "after_minutes") || ascii_equals_ignore_case (key, "after")) {
+                if (!parse_nonnegative_minutes (value, &parsed_window.after_minutes)) {
+                    fclose (file);
+                    return 0;
+                }
+                saw_after = 1;
+            }
+            else {
+                fclose (file);
+                return 0;
+            }
+        }
+        else if (section == SECTION_WEEKDAY || section == SECTION_WEEKEND) {
+            int *times = section == SECTION_WEEKDAY ? parsed_window.weekday_times : parsed_window.weekend_times;
+            int *time_count = section == SECTION_WEEKDAY ? &parsed_window.weekday_time_count : &parsed_window.weekend_time_count;
+
+            if (!ascii_equals_ignore_case (key, "times") && !ascii_equals_ignore_case (key, "time")) {
+                fclose (file);
+                return 0;
+            }
+
+            if (!parse_schedule_times (value, times, time_count)) {
+                fclose (file);
+                return 0;
+            }
+        }
+        else {
+            fclose (file);
+            return 0;
+        }
+    }
+
+    fclose (file);
+
+    if (!saw_before || !saw_after || parsed_window.before_minutes + parsed_window.after_minutes <= 0 ||
+        !parsed_window.weekday_time_count || !parsed_window.weekend_time_count)
+        return 0;
+
+    *window_out = parsed_window;
+    return 1;
+}
+
+int parse_time_restriction_argument (const char *window_text, TimeRestrictionWindow *window_out)
+{
+    if (parse_time_restriction_window (window_text, window_out, NULL))
+        return 1;
+
+    return parse_news_schedule_file (window_text, window_out);
+}
+
 int format_epoch_ms_with_utc_offset (int64_t epoch_ms, int utc_offset_minutes, char *buffer, size_t buffer_size)
 {
     int64_t shifted_epoch_ms = epoch_ms + utc_offset_minutes * 60LL * 1000LL;
@@ -287,6 +420,9 @@ int is_time_restricted_window_active_with_config (int stream_time_enabled, int64
     int hour = time_info->tm_hour;
     int min = time_info->tm_min;
 
+    if (window->schedule_enabled)
+        return is_news_schedule_active (window, time_info);
+
     if (hour < 6 || hour > 21)
         return 0;
 
@@ -325,6 +461,152 @@ static int minute_in_wrapping_range (int minute, int start_minute, int end_minut
         return minute >= start_minute && minute < end_minute;
 
     return minute >= start_minute || minute < end_minute;
+}
+
+static int minute_of_day_in_wrapping_range (int minute, int start_minute, int end_minute)
+{
+    start_minute %= MINUTES_PER_DAY;
+    end_minute %= MINUTES_PER_DAY;
+
+    if (start_minute < 0)
+        start_minute += MINUTES_PER_DAY;
+
+    if (end_minute < 0)
+        end_minute += MINUTES_PER_DAY;
+
+    return minute_in_wrapping_range (minute, start_minute, end_minute);
+}
+
+static int parse_nonnegative_minutes (const char *text, int *value_out)
+{
+    char *end_ptr;
+    long value = strtol (text, &end_ptr, 10);
+
+    if (end_ptr == text || value < 0 || value >= MINUTES_PER_DAY)
+        return 0;
+
+    end_ptr = trim_spaces (end_ptr);
+
+    if (*end_ptr)
+        return 0;
+
+    *value_out = (int) value;
+    return 1;
+}
+
+static int parse_time_of_day_minutes (const char *text, int *minute_of_day_out)
+{
+    char *end_ptr;
+    long hour = strtol (text, &end_ptr, 10);
+    long minute;
+
+    if (end_ptr == text || *end_ptr != ':')
+        return 0;
+
+    text = end_ptr + 1;
+    minute = strtol (text, &end_ptr, 10);
+
+    if (end_ptr == text || hour < 0 || hour > 23 || minute < 0 || minute > 59)
+        return 0;
+
+    end_ptr = trim_spaces (end_ptr);
+
+    if (*end_ptr)
+        return 0;
+
+    *minute_of_day_out = (int)(hour * 60 + minute);
+    return 1;
+}
+
+static int parse_schedule_times (const char *text, int *times, int *time_count)
+{
+    char buffer [2048];
+    char *cursor = buffer;
+
+    if (strlen (text) >= sizeof (buffer))
+        return 0;
+
+    strcpy (buffer, text);
+
+    while (1) {
+        char *comma = strchr (cursor, ',');
+        char *item = cursor;
+        int minute_of_day;
+
+        if (comma)
+            *comma = '\0';
+
+        item = trim_spaces (item);
+
+        if (!*item || *time_count == TIME_RESTRICTION_MAX_SCHEDULE_TIMES ||
+            !parse_time_of_day_minutes (item, &minute_of_day))
+            return 0;
+
+        times [(*time_count)++] = minute_of_day;
+
+        if (!comma)
+            return 1;
+
+        cursor = comma + 1;
+    }
+}
+
+static int ascii_equals_ignore_case (const char *left, const char *right)
+{
+    while (*left && *right) {
+        if (tolower ((unsigned char)*left) != tolower ((unsigned char)*right))
+            return 0;
+
+        left++;
+        right++;
+    }
+
+    return *left == *right;
+}
+
+static char *trim_spaces (char *text)
+{
+    char *end;
+
+    while (isspace ((unsigned char)*text))
+        text++;
+
+    end = text + strlen (text);
+
+    while (end > text && isspace ((unsigned char)end [-1]))
+        *--end = '\0';
+
+    return text;
+}
+
+static void strip_inline_comment (char *text)
+{
+    while (*text) {
+        if (*text == '#' || *text == ';') {
+            *text = '\0';
+            return;
+        }
+
+        text++;
+    }
+}
+
+static int is_news_schedule_active (const TimeRestrictionWindow *window, const struct tm *time_info)
+{
+    int minute_of_day = time_info->tm_hour * 60 + time_info->tm_min;
+    int is_weekend = time_info->tm_wday == 0 || time_info->tm_wday == 6;
+    const int *times = is_weekend ? window->weekend_times : window->weekday_times;
+    int time_count = is_weekend ? window->weekend_time_count : window->weekday_time_count;
+
+    for (int i = 0; i < time_count; ++i) {
+        int start_minute = times [i] - window->before_minutes;
+        int end_minute = times [i] + window->after_minutes;
+
+        if (minute_of_day_in_wrapping_range (minute_of_day, start_minute, end_minute))
+            return 1;
+    }
+
+    return 0;
 }
 
 int is_leap_year (int year)

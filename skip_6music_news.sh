@@ -6,13 +6,13 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SKIPPER="$SCRIPT_DIR/skipper"
 SAMPLE_RATE=48000
 BITRATE=192k
-SKIPPER_WINDOW=0-5,30-40
+SKIPPER_WINDOW="${NEWS_SCHEDULE:-$SCRIPT_DIR/news_schedule.ini}"
 
 usage() {
-    printf 'Usage: %s [--check] [-w ranges] [input.ext] [output.ext]\n' "$0"
+    printf 'Usage: %s [--check] [-w ranges-or-file] [input.ext] [output.ext]\n' "$0"
     printf 'Defaults to the Gilles Peterson iPlayer recording.\n'
     printf 'With one input file, writes input-name_newsskip.ext beside the input.\n'
-    printf 'Default skipper time window: %s\n' "$SKIPPER_WINDOW"
+    printf 'Default skipper schedule/window: %s\n' "$SKIPPER_WINDOW"
 }
 
 require_command() {
@@ -314,7 +314,7 @@ while [ "$#" -gt 0 ]; do
             ;;
         -w|--window)
             if [ "$#" -lt 2 ]; then
-                printf 'Error: %s requires minute ranges like 0-5,30-40\n' "$1" >&2
+                printf 'Error: %s requires minute ranges or a schedule file\n' "$1" >&2
                 exit 1
             fi
             SKIPPER_WINDOW=$2

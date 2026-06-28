@@ -5,10 +5,12 @@ URL="${URL:-http://as-hls-ww-live.akamaized.net/pool_81827798/live/ww/bbc_6music
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SILENCER="$SCRIPT_DIR/silencer"
 SAMPLE_RATE=48000
+SILENCER_WINDOW="${NEWS_SCHEDULE:-$SCRIPT_DIR/news_schedule.ini}"
 
 usage() {
-    printf 'Usage: %s [--check]\n' "$0"
+    printf 'Usage: %s [--check] [-w ranges-or-file]\n' "$0"
     printf 'Set URL=... to override the BBC 6 Music stream.\n'
+    printf 'Default silencer schedule/window: %s\n' "$SILENCER_WINDOW"
 }
 
 require_command() {
@@ -68,29 +70,47 @@ run_check() {
         exit 1
     fi
 
-    "$SILENCER" -p -q -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" < "$tmp_pcm" >/dev/null
+    "$SILENCER" -p -q -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" -w "$SILENCER_WINDOW" < "$tmp_pcm" >/dev/null
     printf 'OK: stream timestamp: %s\n' "$START_TIME"
     printf 'OK: London UTC offset: %s\n' "$LONDON_UTC_OFFSET"
+    printf 'OK: silencer window: %s\n' "$SILENCER_WINDOW"
     printf 'OK: ffmpeg decoded audio and silencer accepted it\n'
     printf 'OK: ffplay is installed for playback\n'
 }
 
 CHECK_ONLY=0
-case "${1:-}" in
-    "")
-        ;;
-    --check)
-        CHECK_ONLY=1
-        ;;
-    -h|--help)
-        usage
-        exit 0
-        ;;
-    *)
-        usage >&2
-        exit 1
-        ;;
-esac
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --check)
+            CHECK_ONLY=1
+            shift
+            ;;
+        -w|--window)
+            if [ "$#" -lt 2 ]; then
+                printf 'Error: %s requires minute ranges or a schedule file\n' "$1" >&2
+                exit 1
+            fi
+            SILENCER_WINDOW=$2
+            shift 2
+            ;;
+        -w?*)
+            SILENCER_WINDOW=${1#-w}
+            shift
+            ;;
+        --window=*)
+            SILENCER_WINDOW=${1#--window=}
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
 
 require_command curl
 require_command ffmpeg
@@ -116,5 +136,5 @@ ffmpeg \
   -reconnect_delay_max 2 \
   -i "$URL" \
   -f s16le -ar "$SAMPLE_RATE" -ac 2 pipe:1 | \
-"$SILENCER" -t -x -v20 -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" | \
+"$SILENCER" -t -x -v20 -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" -w "$SILENCER_WINDOW" | \
 ffplay -hide_banner -loglevel warning -nodisp -f s16le -ar "$SAMPLE_RATE" -ch_layout stereo -

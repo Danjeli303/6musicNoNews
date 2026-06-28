@@ -6,10 +6,12 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SILENCER="$SCRIPT_DIR/silencer"
 SAMPLE_RATE=48000
 BITRATE=192k
+SILENCER_WINDOW="${NEWS_SCHEDULE:-$SCRIPT_DIR/news_schedule.ini}"
 
 usage() {
-    printf 'Usage: %s [--check] [input.m4a] [output.m4a]\n' "$0"
+    printf 'Usage: %s [--check] [-w ranges-or-file] [input.m4a] [output.m4a]\n' "$0"
     printf 'Defaults to the Gilles Peterson iPlayer recording and writes beside this script.\n'
+    printf 'Default silencer schedule/window: %s\n' "$SILENCER_WINDOW"
 }
 
 require_command() {
@@ -85,32 +87,64 @@ run_check() {
         exit 1
     fi
 
-    "$SILENCER" -p -q -s"$SAMPLE_RATE" -T "$START_TIME" -z "$UTC_OFFSET" < "$tmp_pcm" >/dev/null
+    "$SILENCER" -p -q -s"$SAMPLE_RATE" -T "$START_TIME" -z "$UTC_OFFSET" -w "$SILENCER_WINDOW" < "$tmp_pcm" >/dev/null
     printf 'OK: input: %s\n' "$INPUT"
+    printf 'OK: silencer window: %s\n' "$SILENCER_WINDOW"
     printf 'OK: programme start time: %s\n' "$START_TIME"
     printf 'OK: UTC offset: %s\n' "$UTC_OFFSET"
     printf 'OK: ffmpeg decoded audio and silencer accepted it\n'
 }
 
 CHECK_ONLY=0
-case "${1:-}" in
-    --check)
-        CHECK_ONLY=1
-        shift
-        ;;
-    -h|--help)
-        usage
-        exit 0
-        ;;
-esac
+INPUT_ARG=
+OUTPUT_ARG=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --check)
+            CHECK_ONLY=1
+            shift
+            ;;
+        -w|--window)
+            if [ "$#" -lt 2 ]; then
+                printf 'Error: %s requires minute ranges or a schedule file\n' "$1" >&2
+                exit 1
+            fi
+            SILENCER_WINDOW=$2
+            shift 2
+            ;;
+        -w?*)
+            SILENCER_WINDOW=${1#-w}
+            shift
+            ;;
+        --window=*)
+            SILENCER_WINDOW=${1#--window=}
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -*)
+            printf 'Error: unknown option: %s\n' "$1" >&2
+            usage >&2
+            exit 1
+            ;;
+        *)
+            if [ -z "$INPUT_ARG" ]; then
+                INPUT_ARG=$1
+            elif [ -z "$OUTPUT_ARG" ]; then
+                OUTPUT_ARG=$1
+            else
+                usage >&2
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
 
-if [ "$#" -gt 2 ]; then
-    usage >&2
-    exit 1
-fi
-
-INPUT=${1:-$DEFAULT_INPUT}
-OUTPUT=${2:-$(default_output_for_input "$INPUT")}
+INPUT=${INPUT_ARG:-$DEFAULT_INPUT}
+OUTPUT=${OUTPUT_ARG:-$(default_output_for_input "$INPUT")}
 LOG="${OUTPUT%.*}.log"
 
 if [ ! -f "$INPUT" ]; then
@@ -134,6 +168,7 @@ fi
 printf 'Input: %s\n' "$INPUT"
 printf 'Output: %s\n' "$OUTPUT"
 printf 'Log: %s\n' "$LOG"
+printf 'Silencer window: %s\n' "$SILENCER_WINDOW"
 printf 'Programme start time: %s\n' "$START_TIME"
 printf 'UTC offset: %s\n' "$UTC_OFFSET"
 
@@ -143,7 +178,7 @@ ffmpeg \
   -i "$INPUT" \
   -vn \
   -f s16le -ar "$SAMPLE_RATE" -ac 2 pipe:1 2>"$LOG" | \
-"$SILENCER" -t -x -s"$SAMPLE_RATE" -T "$START_TIME" -z "$UTC_OFFSET" 2>>"$LOG" | \
+"$SILENCER" -t -x -s"$SAMPLE_RATE" -T "$START_TIME" -z "$UTC_OFFSET" -w "$SILENCER_WINDOW" 2>>"$LOG" | \
 ffmpeg \
   -hide_banner \
   -loglevel warning \

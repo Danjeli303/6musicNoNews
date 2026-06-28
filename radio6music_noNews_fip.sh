@@ -6,6 +6,7 @@ FIP_URL="${FIP_URL:-https://stream.radiofrance.fr/fip/fip_hifi.m3u8?id=radiofran
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SILENCER="$SCRIPT_DIR/silencer"
 SAMPLE_RATE=48000
+SILENCER_WINDOW="${NEWS_SCHEDULE:-$SCRIPT_DIR/news_schedule.ini}"
 
 # FIP is ducked by the silenced 6 Music signal. Release controls FIP fade-in
 # when 6 Music becomes silent; attack controls FIP fade-out when 6 Music returns.
@@ -23,8 +24,9 @@ AWS_ICECAST_USER="${AWS_ICECAST_USER:-source}"
 AWS_ICECAST_MOUNT="${AWS_ICECAST_MOUNT:-the-radio.mp3}"
 
 usage() {
-    printf 'Usage: %s [--check|-AWS]\n' "$0"
+    printf 'Usage: %s [--check|-AWS] [-w ranges-or-file]\n' "$0"
     printf 'Set BBC_URL=... or FIP_URL=... to override either stream.\n'
+    printf 'Default silencer schedule/window: %s\n' "$SILENCER_WINDOW"
     printf 'With -AWS, set ICECAST_SOURCE_PASSWORD=... or AWS_ICECAST_URL=icecast://source:password@host:8000/mount.mp3.\n'
 }
 
@@ -116,7 +118,7 @@ run_check() {
       -i "$BBC_URL" \
       -t "$check_seconds" \
       -f s16le -ar "$SAMPLE_RATE" -ac 2 pipe:1 | \
-    "$SILENCER" -t -x -q -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" | \
+    "$SILENCER" -t -x -q -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" -w "$SILENCER_WINDOW" | \
     ffmpeg \
       -hide_banner \
       -loglevel warning \
@@ -131,6 +133,7 @@ run_check() {
 
     printf 'OK: BBC stream timestamp: %s\n' "$START_TIME"
     printf 'OK: London UTC offset: %s\n' "$LONDON_UTC_OFFSET"
+    printf 'OK: silencer window: %s\n' "$SILENCER_WINDOW"
     printf 'OK: 6 Music -> silencer -> FIP duck/mix graph ran for %s seconds\n' "$check_seconds"
 }
 
@@ -141,7 +144,7 @@ run_aws_pipeline_once() {
       $(ffmpeg_live_input_args) \
       -i "$BBC_URL" \
       -f s16le -ar "$SAMPLE_RATE" -ac 2 pipe:1 | \
-    "$SILENCER" -t -x -v20 -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" | \
+    "$SILENCER" -t -x -v20 -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" -w "$SILENCER_WINDOW" | \
     ffmpeg \
       -hide_banner \
       -loglevel warning \
@@ -168,6 +171,7 @@ run_aws_pipeline_forever() {
 
         printf 'BBC stream timestamp: %s\n' "$START_TIME" >&2
         printf 'London UTC offset: %s\n' "$LONDON_UTC_OFFSET" >&2
+        printf 'Silencer window: %s\n' "$SILENCER_WINDOW" >&2
 
         if run_aws_pipeline_once; then
             printf 'AWS stream pipeline ended; restarting in %s seconds.\n' "$AWS_RESTART_DELAY_SECONDS" >&2
@@ -181,24 +185,42 @@ run_aws_pipeline_forever() {
 
 CHECK_ONLY=0
 AWS_MODE=0
-case "${1:-}" in
-    "")
-        ;;
-    --check)
-        CHECK_ONLY=1
-        ;;
-    -AWS)
-        AWS_MODE=1
-        ;;
-    -h|--help)
-        usage
-        exit 0
-        ;;
-    *)
-        usage >&2
-        exit 1
-        ;;
-esac
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --check)
+            CHECK_ONLY=1
+            shift
+            ;;
+        -AWS)
+            AWS_MODE=1
+            shift
+            ;;
+        -w|--window)
+            if [ "$#" -lt 2 ]; then
+                printf 'Error: %s requires minute ranges or a schedule file\n' "$1" >&2
+                exit 1
+            fi
+            SILENCER_WINDOW=$2
+            shift 2
+            ;;
+        -w?*)
+            SILENCER_WINDOW=${1#-w}
+            shift
+            ;;
+        --window=*)
+            SILENCER_WINDOW=${1#--window=}
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
 
 require_command curl
 require_command ffmpeg
@@ -230,6 +252,7 @@ else
     printf 'BBC stream timestamp: %s\n' "$START_TIME" >&2
     printf 'London UTC offset: %s\n' "$LONDON_UTC_OFFSET" >&2
 fi
+printf 'Silencer window: %s\n' "$SILENCER_WINDOW" >&2
 
 if [ "$AWS_MODE" -eq 1 ]; then
     run_aws_pipeline_forever
@@ -240,7 +263,7 @@ else
       $(ffmpeg_live_input_args) \
       -i "$BBC_URL" \
       -f s16le -ar "$SAMPLE_RATE" -ac 2 pipe:1 | \
-    "$SILENCER" -t -x -v20 -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" | \
+    "$SILENCER" -t -x -v20 -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" -w "$SILENCER_WINDOW" | \
     ffmpeg \
       -hide_banner \
       -loglevel warning \

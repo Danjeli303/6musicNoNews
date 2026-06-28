@@ -17,6 +17,12 @@ builds the relevant executable if needed, decodes a short amount of audio, and
 checks that the pipeline can run before starting a longer conversion or live
 stream.
 
+The default BBC 6 Music news timings live in `news_schedule.ini`. It uses a
+small INI format with a shared `before_minutes`/`after_minutes` window and
+separate weekday/weekend time lists. The wrappers pass this file through `-w`
+by default; `-w 58-10,28-40` still works for legacy minute-range overrides, and
+`NEWS_SCHEDULE=/path/to/file.ini` can point the wrappers at another schedule.
+
 ### Recorded programme scripts
 
 `skip_6music_news.sh` processes a recorded audio file through `skipper` and
@@ -31,6 +37,7 @@ include that tag.
 ```
 ./skip_6music_news.sh --check input.m4a
 ./skip_6music_news.sh input.m4a
+./skip_6music_news.sh -w news_schedule.ini input.m4a
 ./skip_6music_news.sh -w 58-10,28-40 input.m4a
 ./skip_6music_news.sh input.mp3 output_newsskip.mp3
 ```
@@ -39,9 +46,9 @@ If no input is provided, the script uses its built-in default recording path.
 During conversion it prints the percentage of the input file processed. A
 matching `.log` file is written next to the output. The wrapper currently
 supports strict output for AAC/ALAC MP4-family files, MP3, FLAC, Opus/Vorbis
-OGG, and PCM WAV. It runs `skipper` with a wrapper default news window of
-`0-5,30-40`; use `-w`/`--window` with comma-separated minute ranges to override
-that for later or unusual bulletin timings.
+OGG, and PCM WAV. It runs `skipper` with the default `news_schedule.ini`; use
+`-w`/`--window` with another schedule file or comma-separated minute ranges to
+override that for unusual bulletin timings.
 
 `silence_6music_news.sh` has the same recorded-file interface, but it runs the
 `silencer` executable instead of `skipper`. Use it when you want the newer
@@ -49,6 +56,7 @@ stream-time aware silencing path.
 
 ```
 ./silence_6music_news.sh --check input.m4a
+./silence_6music_news.sh -w news_schedule.ini input.m4a
 ./silence_6music_news.sh input.m4a output_silenced_talk.m4a
 ```
 
@@ -78,6 +86,7 @@ for minutes 28-37 of a real iPlayer recording; run it with
 ```
 ./play_6music_silencer.sh --check
 ./play_6music_silencer.sh
+./play_6music_silencer.sh -w news_schedule.ini
 URL=https://example.com/stream.m3u8 ./play_6music_silencer.sh
 ```
 
@@ -92,6 +101,7 @@ audio, so it fades down when 6 Music returns.
 ```
 ./radio6music_noNews_fip.sh --check
 ./radio6music_noNews_fip.sh
+./radio6music_noNews_fip.sh -w news_schedule.ini
 BBC_URL=https://example.com/bbc.m3u8 FIP_URL=https://example.com/fip.m3u8 ./radio6music_noNews_fip.sh
 ```
 
@@ -131,6 +141,7 @@ running while listening; it continuously refreshes the playlist.
 ```
 ./radio6music_noNews_hls.sh --check
 ./radio6music_noNews_hls.sh
+./radio6music_noNews_hls.sh -w news_schedule.ini
 OUT_DIR=/path/visible/to/hls ./radio6music_noNews_hls.sh
 ```
 

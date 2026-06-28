@@ -127,7 +127,7 @@ assert_file_nonempty "$output"
 assert_file_nonempty "$log"
 assert_contains "$stdout" 'Processed: [0-9]+%' 'progress percentage'
 assert_contains "$stdout" 'Processed: 100%' 'completion percentage'
-assert_contains "$stdout" 'Skipper window: 0-5,30-40' 'default skipper window'
+assert_contains "$stdout" 'Skipper window: .*news_schedule\.ini' 'default skipper schedule'
 assert_single_progress_line "$stdout"
 assert_contains "$log" '(discarded|skip|skipped|talk|total input duration)' 'skipper processing evidence'
 
