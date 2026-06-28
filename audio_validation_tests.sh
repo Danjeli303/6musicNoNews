@@ -398,6 +398,10 @@ run_hls_mux_check() {
     assert_duration_between "$playlist" "$hls_duration" 16 24
 }
 
+run_container_packaging_checks() {
+    assert_log_contains "$SCRIPT_DIR/Dockerfile" 'COPY[[:space:]]+news_schedule\.ini[[:space:]]+\./' 'news schedule image copy'
+}
+
 main() {
     require_command awk
     require_command ffmpeg
@@ -412,8 +416,9 @@ main() {
     run_format_conversion_checks
     run_silencer_checks
     run_hls_mux_check
+    run_container_packaging_checks
 
-    printf 'OK: generated audio, wrapper checks, file conversion, scheduled silence/pass-through, and HLS muxing\n'
+    printf 'OK: generated audio, wrapper checks, file conversion, scheduled silence/pass-through, HLS muxing, and container packaging checks\n'
 }
 
 main "$@"
