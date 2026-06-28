@@ -393,6 +393,7 @@ static void test_parse_news_schedule_file(void)
     int offset = 0;
     int sample_rate = 1000;
     int64_t weekday_before = parse_epoch_ms_or_fail("2026-06-19T06:27:00Z", &offset);
+    int64_t weekday_near = parse_epoch_ms_or_fail("2026-06-19T06:27:30Z", &offset);
     int64_t weekday_start = parse_epoch_ms_or_fail("2026-06-19T06:28:00Z", &offset);
     int64_t weekday_end = parse_epoch_ms_or_fail("2026-06-19T06:35:00Z", &offset);
     int64_t weekend_inactive = parse_epoch_ms_or_fail("2026-06-20T06:58:00Z", &offset);
@@ -411,6 +412,8 @@ static void test_parse_news_schedule_file(void)
     EXPECT_EQ_INT(7 * 60 + 30, window.weekend_times[0]);
 
     EXPECT_FALSE(is_time_restricted_window_active_with_config(1, weekday_before, 0, 0, sample_rate, &window));
+    EXPECT_FALSE(is_time_restricted_window_near_with_config(1, weekday_before, 0, 0, sample_rate, &window, 30));
+    EXPECT_TRUE(is_time_restricted_window_near_with_config(1, weekday_near, 0, 0, sample_rate, &window, 60));
     EXPECT_TRUE(is_time_restricted_window_active_with_config(1, weekday_start, 0, 0, sample_rate, &window));
     EXPECT_FALSE(is_time_restricted_window_active_with_config(1, weekday_end, 0, 0, sample_rate, &window));
     EXPECT_FALSE(is_time_restricted_window_active_with_config(1, weekend_inactive, 0, 0, sample_rate, &window));

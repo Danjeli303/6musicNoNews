@@ -45,6 +45,10 @@ int64_t days_from_civil (int year, int month, int day);
 int is_time_restricted_window_active_with_config (int stream_time_enabled, int64_t stream_start_epoch_ms,
                                                  int stream_time_utc_offset_minutes, int64_t sample_index,
                                                  int sample_rate, const TimeRestrictionWindow *window);
+int is_time_restricted_window_near_with_config (int stream_time_enabled, int64_t stream_start_epoch_ms,
+                                               int stream_time_utc_offset_minutes, int64_t sample_index,
+                                               int sample_rate, const TimeRestrictionWindow *window,
+                                               int margin_seconds);
 int is_time_restricted_window_active (int stream_time_enabled, int64_t stream_start_epoch_ms,
                                       int stream_time_utc_offset_minutes, int64_t sample_index,
                                       int sample_rate);

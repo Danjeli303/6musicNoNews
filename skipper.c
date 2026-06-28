@@ -87,6 +87,7 @@ static const char *usage =
 #define MIN_MUSIC_SECS  20
 #define MAX_PEND_SECS   60
 #define OUTPUT_SECONDS  120
+#define TIME_RESTRICTION_ANALYSIS_MARGIN_SECS 60
 
 #define LOWPASS_FREQ    2000.0
 #define HIGHPASS_FREQ   250.0
@@ -98,7 +99,9 @@ static void fade_in (int16_t *samples, int num_samples, int stride);
 
 static int analyze_window (float *levels, long sample_index, int num_samples, int sample_rate);
 static int is_time_restricted_skip_active (int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window);
+static int is_time_restricted_analysis_active (int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window);
 static int should_skip_mode_at_time (int skip_mode, int mode, int time_restricted_skip_enabled, int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window);
+static void write_passthrough_audio (const int16_t *input_buffer, int input_samples, int channels, int16_t *stereo_buffer);
 static void display_histogram (const char *name, int *histogram, int count);
 static void display_analysis_results (void);
 
@@ -114,6 +117,14 @@ static int is_time_restricted_skip_active (int stream_time_enabled, int64_t stre
     return is_time_restricted_window_active_with_config (stream_time_enabled, stream_start_epoch_ms,
                                                         stream_time_utc_offset_minutes, sample_index,
                                                         sample_rate, time_restriction_window);
+}
+
+static int is_time_restricted_analysis_active (int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window)
+{
+    return is_time_restricted_window_near_with_config (stream_time_enabled, stream_start_epoch_ms,
+                                                       stream_time_utc_offset_minutes, sample_index,
+                                                       sample_rate, time_restriction_window,
+                                                       TIME_RESTRICTION_ANALYSIS_MARGIN_SECS);
 }
 
 static int should_skip_mode_at_time (int skip_mode, int mode, int time_restricted_skip_enabled, int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window)
@@ -134,6 +145,19 @@ static int should_skip_mode_at_time (int skip_mode, int mode, int time_restricte
     return 0;
 }
 
+static void write_passthrough_audio (const int16_t *input_buffer, int input_samples, int channels, int16_t *stereo_buffer)
+{
+    if (channels == 2) {
+        fwrite (input_buffer, sizeof (int16_t) * 2, input_samples, stdout);
+        return;
+    }
+
+    for (int i = 0; i < input_samples; ++i)
+        stereo_buffer [i * 2] = stereo_buffer [i * 2 + 1] = input_buffer [i];
+
+    fwrite (stereo_buffer, sizeof (int16_t) * 2, input_samples, stdout);
+}
+
 int main (int argc, char **argv)
 {
     int channels = CHANNELS, sample_rate = SAMPLE_RATE, keepalive = 0;
@@ -143,8 +167,10 @@ int main (int argc, char **argv)
     int music_hits = 0, talk_hits = 0, analysis_output_file_follows = 0, tensor_input_file_follows = 0;
     int stream_start_time_follows = 0, stream_time_utc_offset_follows = 0, time_restriction_window_follows = 0, time_restricted_skip_enabled = 0;
     int stream_time_enabled = 0, stream_time_utc_offset_minutes = 0, stream_time_utc_offset_is_set = 0;
+    int fast_time_restricted_passthrough = 0;
     int current_mode = 0, music_up_counter = 0, talk_up_counter = 0, pend_up_counter = 0, input_samples;
     int64_t num_samples = 0, transition_sample = 0, confirmed_sample = 0, samples_discarded = 0, samples_written = 0;
+    int64_t fast_passthrough_samples = 0;
     int64_t stream_start_epoch_ms = 0;
     char *analysis_output_filename = NULL, *tensor_input_filename = NULL;
     int16_t *input_buffer, *output_buffer, *crossfade_buffer;
@@ -428,6 +454,10 @@ int main (int argc, char **argv)
         }
     }
 
+    fast_time_restricted_passthrough = time_restricted_skip_enabled && stream_time_enabled &&
+        skip_mode == SKIP_TALK && left_output == OUTPUT_AUDIO && right_output == OUTPUT_AUDIO &&
+        !analysis_output_file;
+
     input_buffer = calloc (sample_rate, sizeof (int16_t) * channels);
     fsamples = calloc (sample_rate, sizeof (float));
 
@@ -470,6 +500,24 @@ int main (int argc, char **argv)
 #endif
 
     while ((input_samples = fread (input_buffer, sizeof (int16_t) * channels, sample_rate, stdin))) {
+
+        if (fast_time_restricted_passthrough && output_buffer_index == 0 &&
+            !is_time_restricted_analysis_active (stream_time_enabled, stream_start_epoch_ms,
+                stream_time_utc_offset_minutes, num_samples, sample_rate, &time_restriction_window) &&
+            !is_time_restricted_analysis_active (stream_time_enabled, stream_start_epoch_ms,
+                stream_time_utc_offset_minutes, num_samples + input_samples - 1, sample_rate, &time_restriction_window)) {
+
+            write_passthrough_audio (input_buffer, input_samples, channels, output_buffer);
+            samples_written += input_samples;
+            fast_passthrough_samples += input_samples;
+            num_samples += input_samples;
+            confirmed_sample = num_samples;
+
+            current_mode = MODE_NOTHING;
+            music_up_counter = talk_up_counter = pend_up_counter = 0;
+            results_buffer_count = level_buffer_index = 0;
+            continue;
+        }
 
         if (channels == 2)
             for (int j = 0; j < input_samples; j++)
@@ -786,12 +834,17 @@ int main (int argc, char **argv)
     if (!quiet) {
         fprintf (stderr, "total input duration = %02d:%02d\n", MINS (num_samples, sample_rate), SECS (num_samples, sample_rate));
 
-        if (verbose)
+        if (verbose) {
             fprintf (stderr, "total windows = %d\n", num_windows);
+            fprintf (stderr, "analysis bypassed = %02d:%02d\n", MINS (fast_passthrough_samples, sample_rate), SECS (fast_passthrough_samples, sample_rate));
+        }
 
-        fprintf (stderr, "raw music hits = %d (%.1f%%), raw talk hits = %d (%.1f%%), unknowns = %d (%.1f%%)\n",
-            music_hits, music_hits * 100.0 / num_windows, talk_hits, talk_hits * 100.0 / num_windows,
-            num_windows - music_hits - talk_hits, (num_windows - music_hits - talk_hits) * 100.0 / num_windows);
+        if (num_windows)
+            fprintf (stderr, "raw music hits = %d (%.1f%%), raw talk hits = %d (%.1f%%), unknowns = %d (%.1f%%)\n",
+                music_hits, music_hits * 100.0 / num_windows, talk_hits, talk_hits * 100.0 / num_windows,
+                num_windows - music_hits - talk_hits, (num_windows - music_hits - talk_hits) * 100.0 / num_windows);
+        else
+            fprintf (stderr, "raw music hits = 0 (0.0%%), raw talk hits = 0 (0.0%%), unknowns = 0 (0.0%%)\n");
         fprintf (stderr, "audio written = %02d:%02d (%.1f%%), audio discarded = %02d:%02d (%.1f%%)\n\n",
             MINS (samples_written, sample_rate), SECS (samples_written, sample_rate), samples_written * 100.0 / (samples_written + samples_discarded),
             MINS (samples_discarded, sample_rate), SECS (samples_discarded, sample_rate), samples_discarded * 100.0 / (samples_written + samples_discarded));

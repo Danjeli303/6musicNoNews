@@ -19,15 +19,14 @@
 
 static int parse_fixed_digits (const char **text_ptr, int digit_count, int *value_out);
 static int minute_is_valid (int minute);
-static int minute_in_wrapping_range (int minute, int start_minute, int end_minute);
-static int minute_of_day_in_wrapping_range (int minute, int start_minute, int end_minute);
+static int value_in_wrapping_range (int value, int start, int end, int modulus);
 static int parse_nonnegative_minutes (const char *text, int *value_out);
 static int parse_time_of_day_minutes (const char *text, int *minute_of_day_out);
 static int parse_schedule_times (const char *text, int *times, int *time_count);
 static int ascii_equals_ignore_case (const char *left, const char *right);
 static char *trim_spaces (char *text);
 static void strip_inline_comment (char *text);
-static int is_news_schedule_active (const TimeRestrictionWindow *window, const struct tm *time_info);
+static int is_news_schedule_near (const TimeRestrictionWindow *window, const struct tm *time_info, int margin_seconds);
 
 void init_default_time_restriction_window (TimeRestrictionWindow *window)
 {
@@ -400,8 +399,21 @@ int is_time_restricted_window_active_with_config (int stream_time_enabled, int64
                                                  int stream_time_utc_offset_minutes, int64_t sample_index,
                                                  int sample_rate, const TimeRestrictionWindow *window)
 {
+    return is_time_restricted_window_near_with_config (stream_time_enabled, stream_start_epoch_ms,
+                                                       stream_time_utc_offset_minutes, sample_index,
+                                                       sample_rate, window, 0);
+}
+
+int is_time_restricted_window_near_with_config (int stream_time_enabled, int64_t stream_start_epoch_ms,
+                                               int stream_time_utc_offset_minutes, int64_t sample_index,
+                                               int sample_rate, const TimeRestrictionWindow *window,
+                                               int margin_seconds)
+{
     time_t time_for_restriction;
     struct tm *time_info;
+
+    if (margin_seconds < 0)
+        margin_seconds = 0;
 
     if (stream_time_enabled) {
         int64_t stream_epoch_ms = stream_start_epoch_ms + sample_index * 1000LL / sample_rate;
@@ -421,14 +433,20 @@ int is_time_restricted_window_active_with_config (int stream_time_enabled, int64
     int min = time_info->tm_min;
 
     if (window->schedule_enabled)
-        return is_news_schedule_active (window, time_info);
+        return is_news_schedule_near (window, time_info, margin_seconds);
+
+    int margin_minutes = (margin_seconds + 59) / 60;
 
     if (hour < 6 || hour > 21)
         return 0;
 
-    for (int i = 0; i < window->range_count; ++i)
-        if (minute_in_wrapping_range (min, window->ranges [i].start_minute, window->ranges [i].end_minute))
+    for (int i = 0; i < window->range_count; ++i) {
+        int start_minute = window->ranges [i].start_minute - margin_minutes;
+        int end_minute = window->ranges [i].end_minute + margin_minutes;
+
+        if (value_in_wrapping_range (min, start_minute, end_minute, 60))
             return 1;
+    }
 
     return 0;
 }
@@ -455,26 +473,21 @@ static int minute_is_valid (int minute)
     return minute >= 0 && minute <= 59;
 }
 
-static int minute_in_wrapping_range (int minute, int start_minute, int end_minute)
+static int value_in_wrapping_range (int value, int start, int end, int modulus)
 {
-    if (start_minute <= end_minute)
-        return minute >= start_minute && minute < end_minute;
+    start %= modulus;
+    end %= modulus;
 
-    return minute >= start_minute || minute < end_minute;
-}
+    if (start < 0)
+        start += modulus;
 
-static int minute_of_day_in_wrapping_range (int minute, int start_minute, int end_minute)
-{
-    start_minute %= MINUTES_PER_DAY;
-    end_minute %= MINUTES_PER_DAY;
+    if (end < 0)
+        end += modulus;
 
-    if (start_minute < 0)
-        start_minute += MINUTES_PER_DAY;
+    if (start <= end)
+        return value >= start && value < end;
 
-    if (end_minute < 0)
-        end_minute += MINUTES_PER_DAY;
-
-    return minute_in_wrapping_range (minute, start_minute, end_minute);
+    return value >= start || value < end;
 }
 
 static int parse_nonnegative_minutes (const char *text, int *value_out)
@@ -591,18 +604,19 @@ static void strip_inline_comment (char *text)
     }
 }
 
-static int is_news_schedule_active (const TimeRestrictionWindow *window, const struct tm *time_info)
+static int is_news_schedule_near (const TimeRestrictionWindow *window, const struct tm *time_info, int margin_seconds)
 {
     int minute_of_day = time_info->tm_hour * 60 + time_info->tm_min;
+    int second_of_day = minute_of_day * 60 + time_info->tm_sec;
     int is_weekend = time_info->tm_wday == 0 || time_info->tm_wday == 6;
     const int *times = is_weekend ? window->weekend_times : window->weekday_times;
     int time_count = is_weekend ? window->weekend_time_count : window->weekday_time_count;
 
     for (int i = 0; i < time_count; ++i) {
-        int start_minute = times [i] - window->before_minutes;
-        int end_minute = times [i] + window->after_minutes;
+        int start_second = (times [i] - window->before_minutes) * 60 - margin_seconds;
+        int end_second = (times [i] + window->after_minutes) * 60 + margin_seconds;
 
-        if (minute_of_day_in_wrapping_range (minute_of_day, start_minute, end_minute))
+        if (value_in_wrapping_range (second_of_day, start_second, end_second, MINUTES_PER_DAY * 60))
             return 1;
     }
 
