@@ -777,6 +777,40 @@ static void test_bypass_talk_silencing(void)
     EXPECT_FALSE(should_bypass_talk_silencing_due_to_time_restriction(&config, &state));
 }
 
+static void test_fast_passthrough_gate(void)
+{
+    ProgramConfig config = config_with_stream_time("2026-06-19T06:20:00Z", 0);
+    ProgramState state = { 0 };
+    char path[] = "/tmp/silencer_schedule_test_XXXXXX";
+
+    if (!write_schedule_fixture(path))
+        return;
+
+    EXPECT_TRUE(parse_news_schedule_file(path, &config.time_restriction_window));
+    config.sample_rate = 1000;
+    config.processing_mode = PROCESSING_MODE_SILENCE_TALK;
+    config.time_restricted_silence_enabled = 1;
+
+    EXPECT_TRUE(can_fast_passthrough_chunk(&config, &state, 1000));
+
+    config.stream_start_epoch_ms = parse_epoch_ms_or_fail("2026-06-19T06:27:30Z", &config.stream_time_utc_offset_minutes);
+    config.stream_time_utc_offset_minutes = 0;
+    EXPECT_FALSE(can_fast_passthrough_chunk(&config, &state, 1000));
+
+    config.stream_start_epoch_ms = parse_epoch_ms_or_fail("2026-06-19T06:20:00Z", &config.stream_time_utc_offset_minutes);
+    config.stream_time_utc_offset_minutes = 0;
+    state.main_output_buffer_idx = 1;
+    EXPECT_FALSE(can_fast_passthrough_chunk(&config, &state, 1000));
+
+    state.fast_passthrough_active = 1;
+    EXPECT_TRUE(can_fast_passthrough_chunk(&config, &state, 1000));
+
+    config.left_debug_output_mode = OUTPUT_LEVEL;
+    EXPECT_FALSE(can_fast_passthrough_chunk(&config, &state, 1000));
+
+    unlink(path);
+}
+
 static void test_fades(void)
 {
     int16_t fade_out_samples[] = { 1000, -1000, 1000, -1000, 1000, -1000, 1000, -1000 };
@@ -1314,6 +1348,7 @@ int main(void)
     test_time_restricted_silence_window();
     test_should_silence_audio_mode_at_sample();
     test_bypass_talk_silencing();
+    test_fast_passthrough_gate();
     test_fades();
     test_buffer_allocation_and_filter_initialization();
     test_populate_main_output_buffer_sample_modes();

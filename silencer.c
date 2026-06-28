@@ -100,6 +100,8 @@ static const char *usage =
 #define MIN_MUSIC_DURATION_SECS  20 // Minimum duration to confirm music mode
 #define MAX_PENDING_STATE_SECS   60 // Max duration to wait for mode confirmation before cancelling
 #define OUTPUT_BUFFER_DURATION_SECS  120 // Max duration of the main output buffer
+#define TIME_RESTRICTION_ANALYSIS_MARGIN_SECS 60
+#define FAST_PASSTHROUGH_DELAY_SECS (ANALYSIS_WINDOW_SECONDS + AVERAGING_WINDOW_SECONDS + MIN_TALK_DURATION_SECS + CROSSFADE_DURATION_SECS)
 
 // Filter parameters
 #define LOWPASS_FILTER_FREQ    2000.0 //
@@ -170,6 +172,8 @@ typedef struct {
     double current_rms_level;  // Current calculated RMS level
     time_t next_debug_wall_clock_report; // Next fallback wall-clock time debug report
     int64_t next_debug_stream_sample_report; // Next stream sample index for debug reporting
+    int64_t fast_passthrough_samples;
+    int fast_passthrough_active;
 } ProgramState;
 
 
@@ -189,6 +193,8 @@ static void initialize_audio_filters(const ProgramConfig *config, AudioBuffers *
 static void prime_rms_ring_buffer(AudioBuffers *buffers, ProgramState *state);
 static void process_audio_stream(ProgramConfig *config, AudioBuffers *buffers, ProgramState *state);
 static void print_periodic_debug_time(const ProgramConfig *config, ProgramState *state);
+static int can_fast_passthrough_chunk(const ProgramConfig *config, const ProgramState *state, int num_input_samples_in_chunk);
+static void write_delayed_passthrough_audio(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, const int16_t *pcm_input_chunk, int num_input_samples_in_chunk);
 static void process_input_chunk(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, int16_t* pcm_input_chunk, int num_input_samples_in_chunk);
 static void populate_main_output_buffer_sample(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, const int16_t* current_input_sample_frame, float current_filtered_sample);
 // Changed ProgramConfig to const ProgramConfig* for the next two prototypes
@@ -544,8 +550,81 @@ static void process_audio_stream(ProgramConfig *config, AudioBuffers *buffers, P
 
     while ((samples_read_this_chunk = fread(buffers->input_buffer, sizeof(int16_t) * config->input_channels, samples_to_read_per_fread, stdin))) { 
         print_periodic_debug_time(config, state);
-        process_input_chunk(config, buffers, state, buffers->input_buffer, samples_read_this_chunk);
+        if (can_fast_passthrough_chunk(config, state, samples_read_this_chunk))
+            write_delayed_passthrough_audio(config, buffers, state, buffers->input_buffer, samples_read_this_chunk);
+        else {
+            state->fast_passthrough_active = 0;
+            process_input_chunk(config, buffers, state, buffers->input_buffer, samples_read_this_chunk);
+        }
     }
+}
+
+static int can_fast_passthrough_chunk(const ProgramConfig *config, const ProgramState *state, int num_input_samples_in_chunk) {
+    if (!(config->time_restricted_silence_enabled && config->stream_time_enabled &&
+          config->processing_mode == PROCESSING_MODE_SILENCE_TALK &&
+          config->left_debug_output_mode == OUTPUT_AUDIO && config->right_debug_output_mode == OUTPUT_AUDIO &&
+          !analysis_binary_output_file && (state->main_output_buffer_idx == 0 || state->fast_passthrough_active))) {
+        return 0;
+    }
+
+    if (num_input_samples_in_chunk <= 0)
+        return 0;
+
+    return !is_time_restricted_window_near_with_config(config->stream_time_enabled,
+                                                       config->stream_start_epoch_ms,
+                                                       config->stream_time_utc_offset_minutes,
+                                                       state->total_samples_processed,
+                                                       config->sample_rate,
+                                                       &config->time_restriction_window,
+                                                       TIME_RESTRICTION_ANALYSIS_MARGIN_SECS) &&
+           !is_time_restricted_window_near_with_config(config->stream_time_enabled,
+                                                       config->stream_start_epoch_ms,
+                                                       config->stream_time_utc_offset_minutes,
+                                                       state->total_samples_processed + num_input_samples_in_chunk - 1,
+                                                       config->sample_rate,
+                                                       &config->time_restriction_window,
+                                                       TIME_RESTRICTION_ANALYSIS_MARGIN_SECS);
+}
+
+static void write_delayed_passthrough_audio(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, const int16_t *pcm_input_chunk, int num_input_samples_in_chunk) {
+    int delay_samples = FAST_PASSTHROUGH_DELAY_SECS * config->sample_rate;
+
+    if (!state->fast_passthrough_active) {
+        state->current_audio_mode = AUDIO_MODE_NOTHING;
+        state->music_confirmation_counter = 0;
+        state->talk_confirmation_counter = 0;
+        state->pending_state_counter = 0;
+        state->analysis_level_buffer_idx = 0;
+        state->tensor_results_buffer_count = 0;
+        state->current_rms_level = 0.0;
+        state->fast_passthrough_active = 1;
+    }
+
+    if (config->input_channels == 2) {
+        memcpy(buffers->main_output_buffer + state->main_output_buffer_idx * 2, pcm_input_chunk, num_input_samples_in_chunk * sizeof(int16_t) * 2);
+    } else {
+        for (int i = 0; i < num_input_samples_in_chunk; ++i) {
+            buffers->main_output_buffer[(state->main_output_buffer_idx + i) * 2] = pcm_input_chunk[i];
+            buffers->main_output_buffer[(state->main_output_buffer_idx + i) * 2 + 1] = pcm_input_chunk[i];
+        }
+    }
+
+    state->main_output_buffer_idx += num_input_samples_in_chunk;
+    state->total_samples_processed += num_input_samples_in_chunk;
+    state->fast_passthrough_samples += num_input_samples_in_chunk;
+
+    if (state->main_output_buffer_idx > delay_samples) {
+        int samples_to_write = state->main_output_buffer_idx - delay_samples;
+
+        fwrite(buffers->main_output_buffer, sizeof(int16_t) * 2, samples_to_write, stdout);
+        state->samples_output_audible += samples_to_write;
+        memmove(buffers->main_output_buffer, buffers->main_output_buffer + samples_to_write * 2,
+                (state->main_output_buffer_idx - samples_to_write) * sizeof(int16_t) * 2);
+        state->main_output_buffer_idx -= samples_to_write;
+    }
+
+    state->last_confirmed_sample_point = state->total_samples_processed - state->main_output_buffer_idx;
+    state->current_transition_sample_point = state->last_confirmed_sample_point;
 }
 
 // Periodically prints stream time to stderr when available, otherwise the local wall-clock time.
@@ -1098,7 +1177,10 @@ static void print_summary_statistics(const ProgramConfig *config, const ProgramS
     if (config->quiet_mode) return; 
 
     fprintf(stderr, "Total input duration = %i:%i\n", MINS(state->total_samples_processed, config->sample_rate), SECS(state->total_samples_processed, config->sample_rate)); 
-    if (config->verbose_level > 0 && !config->quiet_mode) fprintf(stderr, "Total windows analyzed = %d\n", state->num_analysis_windows_done); 
+    if (config->verbose_level > 0 && !config->quiet_mode) {
+        fprintf(stderr, "Total windows analyzed = %d\n", state->num_analysis_windows_done);
+        fprintf(stderr, "Analysis bypassed = %i:%i\n", MINS(state->fast_passthrough_samples, config->sample_rate), SECS(state->fast_passthrough_samples, config->sample_rate));
+    }
     
     fprintf(stderr, "Raw music hits = %d (%.1f%%), raw talk hits = %d (%.1f%%), unknowns = %d (%.1f%%)\n",
             state->raw_music_hits, state->num_analysis_windows_done ? state->raw_music_hits * 100.0 / state->num_analysis_windows_done : 0.0, 
