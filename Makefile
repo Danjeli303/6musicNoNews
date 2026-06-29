@@ -1,8 +1,8 @@
 # Skipper Makefile
 
 CC := gcc
-# Fastest in the news-window benchmark; override for target-specific builds.
-OPTFLAGS ?= -Ofast
+# Fastest in the news-window native profile benchmark; override if needed.
+OPTFLAGS ?= -Ofast -flto
 
 utils := skipper tensor-gen bin2c silencer
 tests := skipper_tests silencer_tests
