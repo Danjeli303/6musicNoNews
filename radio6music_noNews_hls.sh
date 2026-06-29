@@ -19,6 +19,7 @@ DUCK_RATIO="${DUCK_RATIO:-20}"
 FIP_FADE_OUT_MS="${FIP_FADE_OUT_MS:-700}"
 FIP_FADE_IN_MS="${FIP_FADE_IN_MS:-1800}"
 HLS_AUDIO_BITRATE="${HLS_AUDIO_BITRATE:-128k}"
+HLS_AAC_CODER="${HLS_AAC_CODER:-fast}"
 HLS_TIME="${HLS_TIME:-6}"
 HLS_LIST_SIZE="${HLS_LIST_SIZE:-20}"
 HLS_RESTART_DELAY_SECONDS="${HLS_RESTART_DELAY_SECONDS:-1}"
@@ -117,6 +118,7 @@ run_pipeline() {
       -filter_complex "$(mix_with_fip_filter)" \
       -map '[out]' \
       -c:a aac \
+      -aac_coder "$HLS_AAC_CODER" \
       -b:a "$HLS_AUDIO_BITRATE" \
       -f hls \
       -hls_time "$HLS_TIME" \

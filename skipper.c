@@ -12,9 +12,12 @@
 #include <string.h>
 #include <ctype.h>
 #include <math.h>
+#include <time.h>
 
 #ifdef _WIN32
 #include <fcntl.h>
+#else
+#include <sys/time.h>
 #endif
 
 #include "4d-tensor.h"
@@ -112,6 +115,60 @@ static int verbose, quiet;
 #define MINS(s,r) ((int)((s)/((r)*60)))
 #define SECS(s,r) ((int)(((s)/(r))%60))
 
+typedef struct {
+    int enabled;
+    int chunks;
+    int fast_chunks;
+    double started_at;
+    double read_seconds;
+    double prepare_seconds;
+    double process_seconds;
+    double analyze_seconds;
+    double shift_seconds;
+    double fast_passthrough_seconds;
+    double flush_seconds;
+} ProfileStats;
+
+static ProfileStats profile_stats;
+
+static double profile_now_seconds (void)
+{
+#ifdef _WIN32
+    return (double) clock () / CLOCKS_PER_SEC;
+#else
+    struct timeval tv;
+    gettimeofday (&tv, NULL);
+    return tv.tv_sec + tv.tv_usec / 1000000.0;
+#endif
+}
+
+static int profile_env_enabled (const char *name)
+{
+    const char *value = getenv (name);
+    return value && value [0] && strcmp (value, "0");
+}
+
+static void profile_add_seconds (double *bucket, double started_at)
+{
+    if (profile_stats.enabled)
+        *bucket += profile_now_seconds () - started_at;
+}
+
+static void print_profile_summary (int sample_rate, int64_t samples, int windows, int64_t fast_samples)
+{
+    if (!profile_stats.enabled)
+        return;
+
+    fprintf (stderr,
+        "profile: total=%.3fs read=%.3fs prepare=%.3fs process_loop=%.3fs analyze_window=%.3fs shift=%.3fs fast_passthrough=%.3fs flush=%.3fs\n",
+        profile_now_seconds () - profile_stats.started_at, profile_stats.read_seconds,
+        profile_stats.prepare_seconds, profile_stats.process_seconds, profile_stats.analyze_seconds,
+        profile_stats.shift_seconds, profile_stats.fast_passthrough_seconds, profile_stats.flush_seconds);
+    fprintf (stderr, "profile: chunks=%d fast_chunks=%d windows=%d duration=%02d:%02d bypassed=%02d:%02d\n",
+        profile_stats.chunks, profile_stats.fast_chunks, windows, MINS (samples, sample_rate), SECS (samples, sample_rate),
+        MINS (fast_samples, sample_rate), SECS (fast_samples, sample_rate));
+}
+
 static int is_time_restricted_skip_active (int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window)
 {
     return is_time_restricted_window_active_with_config (stream_time_enabled, stream_start_epoch_ms,
@@ -182,6 +239,10 @@ int main (int argc, char **argv)
     TimeRestrictionWindow time_restriction_window;
     uint32_t random = 0x31415926;
     double level = 0.0;
+
+    memset (&profile_stats, 0, sizeof (profile_stats));
+    profile_stats.enabled = profile_env_enabled ("SKIPPER_PROFILE");
+    profile_stats.started_at = profile_now_seconds ();
 
     init_default_time_restriction_window (&time_restriction_window);
 
@@ -499,7 +560,15 @@ int main (int argc, char **argv)
     biquad_apply_buffer (lowpass + 1, ring_buffer, ring_buff_len, 1);
 #endif
 
-    while ((input_samples = fread (input_buffer, sizeof (int16_t) * channels, sample_rate, stdin))) {
+    for (;;) {
+        double read_start = profile_stats.enabled ? profile_now_seconds () : 0.0;
+        input_samples = fread (input_buffer, sizeof (int16_t) * channels, sample_rate, stdin);
+        profile_add_seconds (&profile_stats.read_seconds, read_start);
+
+        if (!input_samples)
+            break;
+
+        profile_stats.chunks++;
 
         if (fast_time_restricted_passthrough && output_buffer_index == 0 &&
             !is_time_restricted_analysis_active (stream_time_enabled, stream_start_epoch_ms,
@@ -507,7 +576,10 @@ int main (int argc, char **argv)
             !is_time_restricted_analysis_active (stream_time_enabled, stream_start_epoch_ms,
                 stream_time_utc_offset_minutes, num_samples + input_samples - 1, sample_rate, &time_restriction_window)) {
 
+            double passthrough_start = profile_stats.enabled ? profile_now_seconds () : 0.0;
             write_passthrough_audio (input_buffer, input_samples, channels, output_buffer);
+            profile_add_seconds (&profile_stats.fast_passthrough_seconds, passthrough_start);
+            profile_stats.fast_chunks++;
             samples_written += input_samples;
             fast_passthrough_samples += input_samples;
             num_samples += input_samples;
@@ -518,6 +590,8 @@ int main (int argc, char **argv)
             results_buffer_count = level_buffer_index = 0;
             continue;
         }
+
+        double prepare_start = profile_stats.enabled ? profile_now_seconds () : 0.0;
 
         if (channels == 2)
             for (int j = 0; j < input_samples; j++)
@@ -535,6 +609,10 @@ int main (int argc, char **argv)
         biquad_apply_buffer (lowpass + 0, fsamples, input_samples, 1);
         biquad_apply_buffer (lowpass + 1, fsamples, input_samples, 1);
 #endif
+
+        profile_add_seconds (&profile_stats.prepare_seconds, prepare_start);
+
+        double process_start = profile_stats.enabled ? profile_now_seconds () : 0.0;
 
         for (int j = 0; j < input_samples; j++) {
             int ring_buff_index = num_samples % ring_buff_len;
@@ -576,7 +654,9 @@ int main (int argc, char **argv)
             ++num_samples;
 
             if (level_buffer_index == level_buff_len) {
+                double analyze_start = profile_stats.enabled ? profile_now_seconds () : 0.0;
                 int tensor_value = analyze_window (level_buffer, num_samples, level_buff_len, sample_rate), detected_mode = MODE_NOTHING;
+                profile_add_seconds (&profile_stats.analyze_seconds, analyze_start);
 
                 if (tensor_value > threshold)
                     music_hits++;
@@ -739,7 +819,9 @@ int main (int argc, char **argv)
                         confirmed_sample = num_samples - ((WINDOW_SECONDS + AVERAGE_SECONDS) * sample_rate + step_samples + crossfade_buff_len) / 2;
                 }
 
+                double shift_start = profile_stats.enabled ? profile_now_seconds () : 0.0;
                 memmove (level_buffer, level_buffer + step_samples, (WINDOW_SECONDS * sample_rate - step_samples) * sizeof (float));
+                profile_add_seconds (&profile_stats.shift_seconds, shift_start);
                 level_buffer_index -= step_samples;
                 num_windows++;
             }
@@ -810,7 +892,11 @@ int main (int argc, char **argv)
                 }
             }
         }
+
+        profile_add_seconds (&profile_stats.process_seconds, process_start);
     }
+
+    double flush_start = profile_stats.enabled ? profile_now_seconds () : 0.0;
 
     if (output_buffer_index) {
         int64_t output_start_sample = num_samples - output_buffer_index;
@@ -830,6 +916,8 @@ int main (int argc, char **argv)
                 write_data ? "wrote" : "discarded", output_buffer_index, (float) output_buffer_index / sample_rate,
                 music_up_counter, talk_up_counter);
     }
+
+    profile_add_seconds (&profile_stats.flush_seconds, flush_start);
 
     if (!quiet) {
         fprintf (stderr, "total input duration = %02d:%02d\n", MINS (num_samples, sample_rate), SECS (num_samples, sample_rate));
@@ -852,6 +940,8 @@ int main (int argc, char **argv)
         if (analysis_output_file)
             display_analysis_results ();
     }
+
+    print_profile_summary (sample_rate, num_samples, num_windows, fast_passthrough_samples);
 
     free (crossfade_buffer);
     free (output_buffer);

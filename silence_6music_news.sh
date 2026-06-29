@@ -6,10 +6,11 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SILENCER="$SCRIPT_DIR/silencer"
 SAMPLE_RATE=48000
 BITRATE=192k
+AAC_CODER="${AAC_CODER:-fast}"
 SILENCER_WINDOW="${NEWS_SCHEDULE:-$SCRIPT_DIR/news_schedule.ini}"
 
 usage() {
-    printf 'Usage: %s [--check] [-w ranges-or-file] [input.m4a] [output.m4a]\n' "$0"
+    printf 'Usage: %s [--check] [--profile] [-w ranges-or-file] [input.m4a] [output.m4a]\n' "$0"
     printf 'Defaults to the Gilles Peterson iPlayer recording and writes beside this script.\n'
     printf 'Default silencer schedule/window: %s\n' "$SILENCER_WINDOW"
 }
@@ -69,6 +70,70 @@ get_offset_from_timestamp() {
     esac
 }
 
+run_profile_stage() {
+    label=$1
+    shift
+    time_file=$(mktemp "${TMPDIR:-/tmp}/recorded-silencer-time.XXXXXX")
+
+    if /usr/bin/time -p "$@" 2>"$time_file"; then
+        status=0
+    else
+        status=$?
+    fi
+
+    awk '!/^(real|user|sys) /' "$time_file" >>"$LOG"
+    real_seconds=$(awk '/^real / { value = $2 } END { print value }' "$time_file")
+    rm -f "$time_file"
+
+    PROFILE_TOTAL=$(awk -v total="$PROFILE_TOTAL" -v stage="$real_seconds" 'BEGIN { printf "%.2f", total + stage }')
+    printf 'Profile: %-14s %6.2fs\n' "$label" "$real_seconds"
+    return "$status"
+}
+
+cleanup_profile_files() {
+    if [ "${PROFILE_DIR:-}" ]; then
+        rm -rf "$PROFILE_DIR"
+        PROFILE_DIR=
+    fi
+}
+
+run_profile() {
+    PROFILE_TOTAL=0
+    PROFILE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/recorded-silencer-profile.XXXXXX")
+    profile_input_pcm="$PROFILE_DIR/input.pcm"
+    profile_output_pcm="$PROFILE_DIR/output.pcm"
+    trap cleanup_profile_files EXIT HUP INT TERM
+
+    : >"$LOG"
+    printf 'Profile mode: staged decode, silencer, encode\n'
+
+    run_profile_stage "ffmpeg decode" \
+      ffmpeg \
+        -hide_banner \
+        -loglevel warning \
+        -y \
+        -i "$INPUT" \
+        -vn \
+        -f s16le -ar "$SAMPLE_RATE" -ac 2 "$profile_input_pcm"
+
+    run_profile_stage "silencer" \
+      sh -c 'SILENCER_PROFILE=1 "$1" -t -x -s"$2" -T "$3" -z "$4" -w "$5" < "$6" > "$7"' \
+        sh "$SILENCER" "$SAMPLE_RATE" "$START_TIME" "$UTC_OFFSET" "$SILENCER_WINDOW" "$profile_input_pcm" "$profile_output_pcm"
+
+    run_profile_stage "ffmpeg encode" \
+      ffmpeg \
+        -hide_banner \
+        -loglevel warning \
+        -y \
+        -f s16le -ar "$SAMPLE_RATE" -ac 2 -i "$profile_output_pcm" \
+        -c:a aac -aac_coder "$AAC_CODER" -b:a "$BITRATE" \
+        "$OUTPUT"
+
+    cleanup_profile_files
+    trap - EXIT HUP INT TERM
+    printf 'Profile: %-14s %6.2fs\n' "total" "$PROFILE_TOTAL"
+}
+
 run_check() {
     tmp_pcm=$(mktemp "${TMPDIR:-/tmp}/recorded-silencer-check.XXXXXX")
     trap 'rm -f "$tmp_pcm"' EXIT HUP INT TERM
@@ -96,12 +161,17 @@ run_check() {
 }
 
 CHECK_ONLY=0
+PROFILE_ONLY=0
 INPUT_ARG=
 OUTPUT_ARG=
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --check)
             CHECK_ONLY=1
+            shift
+            ;;
+        --profile)
+            PROFILE_ONLY=1
             shift
             ;;
         -w|--window)
@@ -172,6 +242,12 @@ printf 'Silencer window: %s\n' "$SILENCER_WINDOW"
 printf 'Programme start time: %s\n' "$START_TIME"
 printf 'UTC offset: %s\n' "$UTC_OFFSET"
 
+if [ "$PROFILE_ONLY" -eq 1 ]; then
+    run_profile
+    printf 'Done: %s\n' "$OUTPUT"
+    exit 0
+fi
+
 ffmpeg \
   -hide_banner \
   -loglevel warning \
@@ -184,7 +260,7 @@ ffmpeg \
   -loglevel warning \
   -y \
   -f s16le -ar "$SAMPLE_RATE" -ac 2 -i pipe:0 \
-  -c:a aac -b:a "$BITRATE" \
+  -c:a aac -aac_coder "$AAC_CODER" -b:a "$BITRATE" \
   "$OUTPUT" 2>>"$LOG"
 
 printf 'Done: %s\n' "$OUTPUT"

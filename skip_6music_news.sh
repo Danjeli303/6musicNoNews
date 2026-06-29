@@ -6,10 +6,11 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SKIPPER="$SCRIPT_DIR/skipper"
 SAMPLE_RATE=48000
 BITRATE=192k
+AAC_CODER="${AAC_CODER:-fast}"
 SKIPPER_WINDOW="${NEWS_SCHEDULE:-$SCRIPT_DIR/news_schedule.ini}"
 
 usage() {
-    printf 'Usage: %s [--check] [-w ranges-or-file] [input.ext] [output.ext]\n' "$0"
+    printf 'Usage: %s [--check] [--profile] [-w ranges-or-file] [input.ext] [output.ext]\n' "$0"
     printf 'Defaults to the Gilles Peterson iPlayer recording.\n'
     printf 'With one input file, writes input-name_newsskip.ext beside the input.\n'
     printf 'Default skipper schedule/window: %s\n' "$SKIPPER_WINDOW"
@@ -173,8 +174,8 @@ prepare_output_format() {
 
     case "$INPUT_CODEC:$INPUT_EXTENSION" in
         aac:m4a|aac:m4b|aac:mp4)
-            AUDIO_CODEC_ARGS="-c:a aac -b:a $INPUT_BITRATE -ar $INPUT_SAMPLE_RATE -ac $INPUT_CHANNELS"
-            MUXER_ARGS="-movflags +faststart"
+            AUDIO_CODEC_ARGS="-c:a aac -aac_coder $AAC_CODER -b:a $INPUT_BITRATE -ar $INPUT_SAMPLE_RATE -ac $INPUT_CHANNELS"
+            MUXER_ARGS=
             case "$INPUT_EXTENSION" in
                 mp4)
                     FORMAT_ARGS="-f mp4"
@@ -276,6 +277,80 @@ cleanup_progress_monitor() {
     fi
 }
 
+run_profile_stage() {
+    label=$1
+    shift
+    time_file=$(mktemp "${TMPDIR:-/tmp}/recorded-skipper-time.XXXXXX")
+
+    if /usr/bin/time -p "$@" 2>"$time_file"; then
+        status=0
+    else
+        status=$?
+    fi
+
+    awk '!/^(real|user|sys) /' "$time_file" >>"$LOG"
+    real_seconds=$(awk '/^real / { value = $2 } END { print value }' "$time_file")
+    rm -f "$time_file"
+
+    PROFILE_TOTAL=$(awk -v total="$PROFILE_TOTAL" -v stage="$real_seconds" 'BEGIN { printf "%.2f", total + stage }')
+    printf 'Profile: %-14s %6.2fs\n' "$label" "$real_seconds"
+    return "$status"
+}
+
+cleanup_profile_files() {
+    if [ "${PROFILE_DIR:-}" ]; then
+        rm -rf "$PROFILE_DIR"
+        PROFILE_DIR=
+    fi
+}
+
+run_profile() {
+    PROFILE_TOTAL=0
+    PROFILE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/recorded-skipper-profile.XXXXXX")
+    profile_input_pcm="$PROFILE_DIR/input.pcm"
+    profile_output_pcm="$PROFILE_DIR/output.pcm"
+    trap cleanup_profile_files EXIT HUP INT TERM
+
+    : >"$LOG"
+    printf 'Profile mode: staged decode, skipper, encode\n'
+
+    run_profile_stage "ffmpeg decode" \
+      ffmpeg \
+        -hide_banner \
+        -loglevel warning \
+        -nostats \
+        -y \
+        -i "$INPUT" \
+        -vn \
+        -f s16le -ar "$INPUT_SAMPLE_RATE" -ac "$INPUT_CHANNELS" "$profile_input_pcm"
+
+    run_profile_stage "skipper" \
+      sh -c 'SKIPPER_PROFILE=1 "$1" -t -x -w "$2" -s"$3" -c"$4" -T "$5" -z "$6" < "$7" > "$8"' \
+        sh "$SKIPPER" "$SKIPPER_WINDOW" "$INPUT_SAMPLE_RATE" "$INPUT_CHANNELS" "$START_TIME" "$UTC_OFFSET" "$profile_input_pcm" "$profile_output_pcm"
+
+    run_profile_stage "ffmpeg encode" \
+      ffmpeg \
+        -hide_banner \
+        -loglevel warning \
+        -y \
+        -f s16le -ar "$INPUT_SAMPLE_RATE" -ac "$INPUT_CHANNELS" -i "$profile_output_pcm" \
+        -i "$INPUT" \
+        -map 0:a:0 \
+        $ARTWORK_MAP \
+        -map_metadata 1 \
+        -map_metadata:s:a:0 1:s:a:0 \
+        -map_chapters 1 \
+        $AUDIO_CODEC_ARGS \
+        $VIDEO_CODEC_ARGS \
+        $MUXER_ARGS \
+        $FORMAT_ARGS \
+        "$OUTPUT"
+
+    cleanup_profile_files
+    trap - EXIT HUP INT TERM
+    printf 'Profile: %-14s %6.2fs\n' "total" "$PROFILE_TOTAL"
+}
+
 run_check() {
     tmp_pcm=$(mktemp "${TMPDIR:-/tmp}/recorded-skipper-check.XXXXXX")
     trap 'rm -f "$tmp_pcm"' EXIT HUP INT TERM
@@ -304,12 +379,17 @@ run_check() {
 }
 
 CHECK_ONLY=0
+PROFILE_ONLY=0
 INPUT_ARG=
 OUTPUT_ARG=
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --check)
             CHECK_ONLY=1
+            shift
+            ;;
+        --profile)
+            PROFILE_ONLY=1
             shift
             ;;
         -w|--window)
@@ -382,6 +462,12 @@ printf 'Audio: %s/%s, %s Hz, %s channels, %s bit/s target\n' "$INPUT_CODEC" "$IN
 printf 'Skipper window: %s\n' "$SKIPPER_WINDOW"
 printf 'Programme start time: %s\n' "$START_TIME"
 printf 'UTC offset: %s\n' "$UTC_OFFSET"
+
+if [ "$PROFILE_ONLY" -eq 1 ]; then
+    run_profile
+    printf 'Done: %s\n' "$OUTPUT"
+    exit 0
+fi
 
 start_progress_monitor
 trap cleanup_progress_monitor EXIT HUP INT TERM

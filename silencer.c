@@ -22,6 +22,8 @@
 
 #ifdef _WIN32
 #include <fcntl.h>
+#else
+#include <sys/time.h>
 #endif
 
 #include "4d-tensor.h" // Assumed to be in the same directory or include path
@@ -183,6 +185,22 @@ static FILE *analysis_binary_output_file; // File for -a option
 static int verbose_g; // Global verbose flag, set from ProgramConfig
 static int quiet_g;   // Global quiet flag, set from ProgramConfig
 
+typedef struct {
+    int enabled;
+    int chunks;
+    int fast_chunks;
+    double started_at;
+    double read_seconds;
+    double prepare_seconds;
+    double process_seconds;
+    double analyze_seconds;
+    double shift_seconds;
+    double fast_passthrough_seconds;
+    double flush_seconds;
+} ProfileStats;
+
+static ProfileStats profile_stats;
+
 // --- Function Prototypes (Refactored Main Logic) ---
 static void initialize_program_config(ProgramConfig *config);
 static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *config);
@@ -218,10 +236,51 @@ static void display_analysis_results (void);
 #define MINS(s,r) ((int)((s)/((r)*60))) 
 #define SECS(s,r) ((int)(((s)/(r))%60)) 
 
+static double profile_now_seconds(void) {
+#ifdef _WIN32
+    return (double) clock() / CLOCKS_PER_SEC;
+#else
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec + tv.tv_usec / 1000000.0;
+#endif
+}
+
+static int profile_env_enabled(const char *name) {
+    const char *value = getenv(name);
+    return value && value[0] && strcmp(value, "0");
+}
+
+static void profile_add_seconds(double *bucket, double started_at) {
+    if (profile_stats.enabled) {
+        *bucket += profile_now_seconds() - started_at;
+    }
+}
+
+static void print_profile_summary(const ProgramConfig *config, const ProgramState *state) {
+    if (!profile_stats.enabled) {
+        return;
+    }
+
+    fprintf(stderr,
+        "profile: total=%.3fs read=%.3fs prepare=%.3fs process_loop=%.3fs analyze_window=%.3fs shift=%.3fs fast_passthrough=%.3fs flush=%.3fs\n",
+        profile_now_seconds() - profile_stats.started_at, profile_stats.read_seconds,
+        profile_stats.prepare_seconds, profile_stats.process_seconds, profile_stats.analyze_seconds,
+        profile_stats.shift_seconds, profile_stats.fast_passthrough_seconds, profile_stats.flush_seconds);
+    fprintf(stderr, "profile: chunks=%d fast_chunks=%d windows=%d duration=%02d:%02d bypassed=%02d:%02d\n",
+        profile_stats.chunks, profile_stats.fast_chunks, state->num_analysis_windows_done,
+        MINS(state->total_samples_processed, config->sample_rate), SECS(state->total_samples_processed, config->sample_rate),
+        MINS(state->fast_passthrough_samples, config->sample_rate), SECS(state->fast_passthrough_samples, config->sample_rate));
+}
+
 int main (int argc, char **argv) {
     ProgramConfig config;
     AudioBuffers buffers;
     ProgramState state = {0}; // Initialize all fields to zero/NULL
+
+    memset(&profile_stats, 0, sizeof(profile_stats));
+    profile_stats.enabled = profile_env_enabled("SILENCER_PROFILE");
+    profile_stats.started_at = profile_now_seconds();
 
     initialize_program_config(&config);
 
@@ -276,8 +335,11 @@ int main (int argc, char **argv) {
 
     process_audio_stream(&config, &buffers, &state);
 
+    double flush_start = profile_stats.enabled ? profile_now_seconds() : 0.0;
     flush_remaining_audio(&config, &buffers, &state);
+    profile_add_seconds(&profile_stats.flush_seconds, flush_start);
     print_summary_statistics(&config, &state);
+    print_profile_summary(&config, &state);
     cleanup_resources(&buffers);
 
     if (analysis_binary_output_file) {
@@ -548,11 +610,23 @@ static void process_audio_stream(ProgramConfig *config, AudioBuffers *buffers, P
     int samples_read_this_chunk;
     size_t samples_to_read_per_fread = config->sample_rate; 
 
-    while ((samples_read_this_chunk = fread(buffers->input_buffer, sizeof(int16_t) * config->input_channels, samples_to_read_per_fread, stdin))) { 
+    for (;;) {
+        double read_start = profile_stats.enabled ? profile_now_seconds() : 0.0;
+        samples_read_this_chunk = fread(buffers->input_buffer, sizeof(int16_t) * config->input_channels, samples_to_read_per_fread, stdin);
+        profile_add_seconds(&profile_stats.read_seconds, read_start);
+
+        if (!samples_read_this_chunk) {
+            break;
+        }
+
+        profile_stats.chunks++;
         print_periodic_debug_time(config, state);
-        if (can_fast_passthrough_chunk(config, state, samples_read_this_chunk))
+        if (can_fast_passthrough_chunk(config, state, samples_read_this_chunk)) {
+            double passthrough_start = profile_stats.enabled ? profile_now_seconds() : 0.0;
             write_delayed_passthrough_audio(config, buffers, state, buffers->input_buffer, samples_read_this_chunk);
-        else {
+            profile_add_seconds(&profile_stats.fast_passthrough_seconds, passthrough_start);
+            profile_stats.fast_chunks++;
+        } else {
             state->fast_passthrough_active = 0;
             process_input_chunk(config, buffers, state, buffers->input_buffer, samples_read_this_chunk);
         }
@@ -683,6 +757,7 @@ static void print_periodic_debug_time(const ProgramConfig *config, ProgramState 
 // Processes a single chunk of PCM input samples.
 static void process_input_chunk(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, int16_t* pcm_input_chunk, int num_input_samples_in_chunk) {
     // Convert input to mono float and apply filters
+    double prepare_start = profile_stats.enabled ? profile_now_seconds() : 0.0;
     for (int i = 0; i < num_input_samples_in_chunk; ++i) {
         // Generate mono float sample with dither
         if (config->input_channels == 2) { 
@@ -701,8 +776,10 @@ static void process_input_chunk(const ProgramConfig *config, AudioBuffers *buffe
         buffers->mono_float_samples[i] = biquad_apply_sample(&buffers->lowpass_filters[0], buffers->mono_float_samples[i]); 
 #endif
     }
+    profile_add_seconds(&profile_stats.prepare_seconds, prepare_start);
 
     // Process each sample from the filtered chunk
+    double process_start = profile_stats.enabled ? profile_now_seconds() : 0.0;
     for (int i = 0; i < num_input_samples_in_chunk; ++i) {
         // Calculate RMS level
         int rms_ring_idx = state->total_samples_processed % state->rms_ring_buffer_len; 
@@ -737,8 +814,10 @@ static void process_input_chunk(const ProgramConfig *config, AudioBuffers *buffe
             perform_detection_and_handle_transitions(config, buffers, state);
             
             // Shift analysis_level_buffer
+            double shift_start = profile_stats.enabled ? profile_now_seconds() : 0.0;
             memmove(buffers->analysis_level_buffer, buffers->analysis_level_buffer + state->analysis_step_samples, 
                     (state->analysis_level_buffer_len - state->analysis_step_samples) * sizeof(float)); 
+            profile_add_seconds(&profile_stats.shift_seconds, shift_start);
             state->analysis_level_buffer_idx -= state->analysis_step_samples; 
             state->num_analysis_windows_done++; 
         }
@@ -746,6 +825,7 @@ static void process_input_chunk(const ProgramConfig *config, AudioBuffers *buffe
         // Write confirmed audio from main_output_buffer to stdout
         write_confirmed_audio_to_stdout(config, buffers, state);
     }
+    profile_add_seconds(&profile_stats.process_seconds, process_start);
 }
 
 
@@ -801,7 +881,9 @@ static void populate_main_output_buffer_sample(const ProgramConfig *config, Audi
 // Changed ProgramConfig to const ProgramConfig*
 static void perform_detection_and_handle_transitions(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state) {
     // Call analyze_window to get tensor value for the current analysis window
+    double analyze_start = profile_stats.enabled ? profile_now_seconds() : 0.0;
     int tensor_raw_value = analyze_window(buffers->analysis_level_buffer, state->total_samples_processed, state->analysis_level_buffer_len, config->sample_rate); 
+    profile_add_seconds(&profile_stats.analyze_seconds, analyze_start);
     int detected_audio_mode_this_step = AUDIO_MODE_NOTHING; // What this specific analysis step indicates
 
     // Update raw hit counters

@@ -205,6 +205,22 @@ run_wrapper_checks() {
     silence_check_stdout="$WORK_DIR/silence-check.stdout"
     "$SCRIPT_DIR/silence_6music_news.sh" --check "$SOURCE" >"$silence_check_stdout"
     assert_output_contains "$silence_check_stdout" 'OK: silencer window: .*news_schedule\.ini' 'default silencer schedule'
+
+    skip_profile_stdout="$WORK_DIR/skip-profile.stdout"
+    skip_profile_output="$WORK_DIR/skip-profile.m4a"
+    "$SCRIPT_DIR/skip_6music_news.sh" --profile "$SOURCE" "$skip_profile_output" >"$skip_profile_stdout"
+    assert_file_nonempty "$skip_profile_output"
+    assert_output_contains "$skip_profile_stdout" 'Profile: ffmpeg decode' 'skip decode profile'
+    assert_output_contains "$skip_profile_stdout" 'Profile: skipper' 'skipper profile'
+    assert_output_contains "$skip_profile_stdout" 'Profile: ffmpeg encode' 'skip encode profile'
+
+    silence_profile_stdout="$WORK_DIR/silence-profile.stdout"
+    silence_profile_output="$WORK_DIR/silence-profile.m4a"
+    "$SCRIPT_DIR/silence_6music_news.sh" --profile "$SOURCE" "$silence_profile_output" >"$silence_profile_stdout"
+    assert_file_nonempty "$silence_profile_output"
+    assert_output_contains "$silence_profile_stdout" 'Profile: ffmpeg decode' 'silence decode profile'
+    assert_output_contains "$silence_profile_stdout" 'Profile: silencer' 'silencer profile'
+    assert_output_contains "$silence_profile_stdout" 'Profile: ffmpeg encode' 'silence encode profile'
 }
 
 expected_format_matches_extension() {
@@ -400,6 +416,7 @@ run_hls_mux_check() {
 
 run_container_packaging_checks() {
     assert_log_contains "$SCRIPT_DIR/Dockerfile" 'COPY[[:space:]]+news_schedule\.ini[[:space:]]+\./' 'news schedule image copy'
+    assert_log_contains "$SCRIPT_DIR/radio6music_noNews_hls.sh" 'aac_coder[[:space:]]+"\$HLS_AAC_CODER"' 'fast HLS AAC encoder'
 }
 
 main() {
