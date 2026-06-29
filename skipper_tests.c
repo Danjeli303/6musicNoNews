@@ -73,6 +73,38 @@ static int64_t parse_epoch_ms_or_fail(const char *time_text, int *offset_minutes
     return epoch_ms;
 }
 
+static int write_schedule_fixture(char *path)
+{
+    const char *schedule_text =
+        "[window]\n"
+        "before_minutes=2\n"
+        "after_minutes=5\n"
+        "\n"
+        "[weekday]\n"
+        "times=06:30,07:00\n"
+        "\n"
+        "[weekend]\n"
+        "times=07:30\n";
+    int fd = mkstemp(path);
+    FILE *file;
+
+    EXPECT_TRUE(fd >= 0);
+    if (fd < 0)
+        return 0;
+
+    file = fdopen(fd, "w");
+    EXPECT_TRUE(file != NULL);
+    if (!file) {
+        close(fd);
+        unlink(path);
+        return 0;
+    }
+
+    EXPECT_TRUE(fputs(schedule_text, file) >= 0);
+    EXPECT_TRUE(fclose(file) == 0);
+    return 1;
+}
+
 typedef struct {
     const unsigned char *data;
     size_t size;
@@ -354,6 +386,42 @@ static void test_parse_time_restriction_window(void)
     EXPECT_FALSE(parse_time_restriction_window("0-5,", &window, NULL));
 }
 
+static void test_parse_news_schedule_file(void)
+{
+    TimeRestrictionWindow window;
+    char path[] = "/tmp/skipper_schedule_test_XXXXXX";
+    int offset = 0;
+    int sample_rate = 1000;
+    int64_t weekday_before = parse_epoch_ms_or_fail("2026-06-19T06:27:00Z", &offset);
+    int64_t weekday_near = parse_epoch_ms_or_fail("2026-06-19T06:27:30Z", &offset);
+    int64_t weekday_start = parse_epoch_ms_or_fail("2026-06-19T06:28:00Z", &offset);
+    int64_t weekday_end = parse_epoch_ms_or_fail("2026-06-19T06:35:00Z", &offset);
+    int64_t weekend_inactive = parse_epoch_ms_or_fail("2026-06-20T06:58:00Z", &offset);
+    int64_t weekend_active = parse_epoch_ms_or_fail("2026-06-20T07:28:00Z", &offset);
+
+    if (!write_schedule_fixture(path))
+        return;
+
+    EXPECT_TRUE(parse_time_restriction_argument(path, &window));
+    EXPECT_EQ_INT(1, window.schedule_enabled);
+    EXPECT_EQ_INT(2, window.before_minutes);
+    EXPECT_EQ_INT(5, window.after_minutes);
+    EXPECT_EQ_INT(2, window.weekday_time_count);
+    EXPECT_EQ_INT(1, window.weekend_time_count);
+    EXPECT_EQ_INT(6 * 60 + 30, window.weekday_times[0]);
+    EXPECT_EQ_INT(7 * 60 + 30, window.weekend_times[0]);
+
+    EXPECT_FALSE(is_time_restricted_window_active_with_config(1, weekday_before, 0, 0, sample_rate, &window));
+    EXPECT_FALSE(is_time_restricted_window_near_with_config(1, weekday_before, 0, 0, sample_rate, &window, 30));
+    EXPECT_TRUE(is_time_restricted_window_near_with_config(1, weekday_near, 0, 0, sample_rate, &window, 60));
+    EXPECT_TRUE(is_time_restricted_window_active_with_config(1, weekday_start, 0, 0, sample_rate, &window));
+    EXPECT_FALSE(is_time_restricted_window_active_with_config(1, weekday_end, 0, 0, sample_rate, &window));
+    EXPECT_FALSE(is_time_restricted_window_active_with_config(1, weekend_inactive, 0, 0, sample_rate, &window));
+    EXPECT_TRUE(is_time_restricted_window_active_with_config(1, weekend_active, 0, 0, sample_rate, &window));
+
+    unlink(path);
+}
+
 static void test_parse_iso8601_timestamp_ms(void)
 {
     int offset = 123;
@@ -607,6 +675,36 @@ static void test_program_main_pass_all_mono_input(void)
     free(run.output);
 }
 
+static void test_program_main_accepts_schedule_file_window(void)
+{
+    int16_t input[] = { 1000, -1000 };
+    int16_t expected[] = {
+        1000, 1000,
+        -1000, -1000
+    };
+    char path[] = "/tmp/skipper_schedule_test_XXXXXX";
+    char arg0[] = "skipper";
+    char arg1[] = "-p";
+    char arg2[] = "-q";
+    char arg3[] = "-c1";
+    char arg4[] = "-s11025";
+    char arg5[] = "-w";
+    char *argv[] = { arg0, arg1, arg2, arg3, arg4, arg5, path };
+    ProgramRun run;
+
+    if (!write_schedule_fixture(path))
+        return;
+
+    run = run_skipper_with_input(7, argv, input, 2, 1);
+    EXPECT_EQ_INT(0, run.status);
+    EXPECT_EQ_SIZE(sizeof(expected), run.output_size);
+    if (run.output)
+        EXPECT_MEMEQ(expected, run.output, sizeof(expected));
+
+    free(run.output);
+    unlink(path);
+}
+
 static void test_program_main_skip_everything_and_debug_mono(void)
 {
     int16_t mono_input[] = { 1000, -1000, 3000, -3000 };
@@ -754,6 +852,7 @@ int main(void)
     test_calendar_helpers();
     test_parse_utc_offset_minutes();
     test_parse_time_restriction_window();
+    test_parse_news_schedule_file();
     test_parse_iso8601_timestamp_ms();
     test_time_restricted_skip_window();
     test_should_skip_mode_at_time();
@@ -761,6 +860,7 @@ int main(void)
     test_analyze_window_constant_and_cyclic_levels();
     test_tensor_loading_round_trip();
     test_program_main_pass_all_mono_input();
+    test_program_main_accepts_schedule_file_window();
     test_program_main_skip_everything_and_debug_mono();
     test_program_main_argument_validation();
 

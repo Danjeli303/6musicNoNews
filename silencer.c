@@ -1,16 +1,10 @@
 ////////////////////////////////////////////////////////////////////////////
-//                            **** SKIPPER **** //
-//                  Selective Audio Detection and Filter                  //
+//                           **** SILENCER ****                          //
+//             Selective Audio Detection and Silence Filter               //
 //                    Copyright (c) 2024 David Bryant.                    //
 //                          All Rights Reserved.                          //
 //      Distributed under the BSD Software License (see license.txt)      //
 ////////////////////////////////////////////////////////////////////////////
-
-// MODIFIED VERSION:
-// - Silences talk/music instead of skipping.
-// - Refactored for improved readability.
-// - Added -x option for time-restricted talk silencing.
-// - Corrected compiler errors and warnings.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,15 +12,17 @@
 #include <string.h>
 #include <ctype.h>
 #include <math.h>
-#include <time.h> // Added for time-based functionality
+#include <time.h>
 
 #ifdef _WIN32
 #include <fcntl.h>
+#else
+#include <sys/time.h>
 #endif
 
-#include "4d-tensor.h" // Assumed to be in the same directory or include path
-#include "skipper.h"   // Assumed to be in the same directory or include path
-#include "biquad.h"    // Assumed to be in the same directory or include path
+#include "4d-tensor.h"
+#include "skipper.h"
+#include "biquad.h"
 #include "skipper_time.h"
 #include "skipper_tensor.h"
 
@@ -51,40 +47,40 @@
 #define AUDIO_MODE_TALK       -1 // Talk is detected
 
 static const char *sign_on = "\n"
-" SKIPPER  Selective Audio Detection and Filter (Silence Mod, Refactored, Time-Restricted) Version %.1f\n" // Modified
-" Copyright (c) 2024 David Bryant. All Rights Reserved.\n\n"; //
+" SILENCER  Time-Restricted Audio Detection and Silence Filter  Version %.1f\n"
+" Copyright (c) 2024 David Bryant. All Rights Reserved.\n\n";
 
 static const char *usage =
-" Usage:     SKIPPER [-options] < SourceAudio.pcm > StereoOutput.pcm\n\n"
+" Usage:     SILENCER [-options] < SourceAudio.pcm > StereoOutput.pcm\n\n"
 " Operation: scan source audio (stdin) using tensor discrimination to filter\n"
 "            output (stdout), silencing either music (-m) or talk (-t);\n"
 "            or output raw scan analytics for use with TENSOR-GEN util (-a)\n\n"
-" Options:  -a <file.bin>    = output analysis results to specified file\n" //
-"           -c<n>            = override default channel count of 2\n" //
-"           -d <file.tensor> = specify alternate discrimination tensor file\n" //
-"           -k               = keep-alive crossfading for long silences\n" //
-"           -l<n>            = left output override (for debug, n = 0-4:\n" //
+" Options:  -a <file.bin>    = output analysis results to specified file\n"
+"           -c<n>            = override default channel count of 2\n"
+"           -d <file.tensor> = specify alternate discrimination tensor file\n"
+"           -k               = keep-alive crossfading for long silences\n"
+"           -l<n>            = left output override (for debug, n = 0-4:\n"
 "                            = 0=audio, 1=mono, 2=filtered, 3=level, 4=tensor)\n"
-"           -m[<n>]          = silence music, with optional threshold offset\n" //
+"           -m[<n>]          = silence music, with optional threshold offset\n"
 "                            = (raise or lower music threshold +/- 99 points)\n"
-"           -n               = output only silence (silence everything)\n" //
-"           -p               = pass all audio (no silencing, default)\n" //
-"           -q               = no messaging except errors\n" //
-"           -r<n>            = right output override (for debug, n = 0-4:\n" //
+"           -n               = output only silence (silence everything)\n"
+"           -p               = pass all audio (no silencing, default)\n"
+"           -q               = no messaging except errors\n"
+"           -r<n>            = right output override (for debug, n = 0-4:\n"
 "                            = 0=audio, 1=mono, 2=filtered, 3=level, 4=tensor)\n"
-"           -s<n>            = override default sample rate of 44.1 kHz\n" //
-"           -t[<n>]          = silence talk, with optional threshold offset\n" //
+"           -s<n>            = override default sample rate of 44.1 kHz\n"
+"           -t[<n>]          = silence talk, with optional threshold offset\n"
 "                            = (raise or lower talk threshold +/- 99 points)\n"
-"           -T <iso-time>    = stream start time (e.g. HLS PROGRAM-DATE-TIME)\n" //
-"           -w<ranges>       = with -x, active minute ranges (default 58-5,28-35)\n"
-"           -x               = with -t, enables time-restricted talk silencing (6am-10pm, :58-:05 and :28-:35 by default)\n" // New option
-"           -v[<n>]          = set verbosity + [rate in seconds]\n" //
-"           -z<+/-HH:MM>     = UTC offset for stream debug time display (e.g. +01:00)\n\n" //
-" Web:      Visit www.github.com/dbry/skipper for latest version and info\n\n"; //
+"           -T <iso-time>    = stream start time (e.g. HLS PROGRAM-DATE-TIME)\n"
+"           -w<ranges|file>  = with -x, active minute ranges or INI schedule file\n"
+"                            = (default ranges: 58-5,28-35)\n"
+"           -x               = with -t, enables time-restricted talk silencing\n"
+"           -v[<n>]          = set verbosity + [rate in seconds]\n"
+"           -z<+/-HH:MM>     = UTC offset for stream debug time display (e.g. +01:00)\n\n";
 
 // Default audio parameters
-#define DEFAULT_CHANNELS        2 //
-#define DEFAULT_SAMPLE_RATE     44100 //
+#define DEFAULT_CHANNELS        2
+#define DEFAULT_SAMPLE_RATE     44100
 
 // Analysis and processing parameters
 #define LEVEL_WINDOW_MS    50     // RMS level calculation window in milliseconds
@@ -94,15 +90,17 @@ static const char *usage =
 #define AVERAGING_BUFFER_COUNT   (AVERAGING_WINDOW_SECONDS*1000/ANALYSIS_STEP_MSECS) //
 
 // Timing parameters for mode switching and crossfades
-#define CROSSFADE_DURATION_SECS  2 //
+#define CROSSFADE_DURATION_SECS  2
 #define MIN_TALK_DURATION_SECS   10 // Minimum duration to confirm talk mode
 #define MIN_MUSIC_DURATION_SECS  20 // Minimum duration to confirm music mode
 #define MAX_PENDING_STATE_SECS   60 // Max duration to wait for mode confirmation before cancelling
 #define OUTPUT_BUFFER_DURATION_SECS  120 // Max duration of the main output buffer
+#define TIME_RESTRICTION_ANALYSIS_MARGIN_SECS 60
+#define FAST_PASSTHROUGH_DELAY_SECS (ANALYSIS_WINDOW_SECONDS + AVERAGING_WINDOW_SECONDS + MIN_TALK_DURATION_SECS + CROSSFADE_DURATION_SECS)
 
 // Filter parameters
-#define LOWPASS_FILTER_FREQ    2000.0 //
-#define HIGHPASS_FILTER_FREQ   250.0 //
+#define LOWPASS_FILTER_FREQ    2000.0
+#define HIGHPASS_FILTER_FREQ   250.0
 
 #define MAX_AUDIO_CYCLES      128 // Max cycles to detect in analysis window for feature extraction
 
@@ -169,6 +167,8 @@ typedef struct {
     double current_rms_level;  // Current calculated RMS level
     time_t next_debug_wall_clock_report; // Next fallback wall-clock time debug report
     int64_t next_debug_stream_sample_report; // Next stream sample index for debug reporting
+    int64_t fast_passthrough_samples;
+    int fast_passthrough_active;
 } ProgramState;
 
 
@@ -178,7 +178,23 @@ static FILE *analysis_binary_output_file; // File for -a option
 static int verbose_g; // Global verbose flag, set from ProgramConfig
 static int quiet_g;   // Global quiet flag, set from ProgramConfig
 
-// --- Function Prototypes (Refactored Main Logic) ---
+typedef struct {
+    int enabled;
+    int chunks;
+    int fast_chunks;
+    double started_at;
+    double read_seconds;
+    double prepare_seconds;
+    double process_seconds;
+    double analyze_seconds;
+    double shift_seconds;
+    double fast_passthrough_seconds;
+    double flush_seconds;
+} ProfileStats;
+
+static ProfileStats profile_stats;
+
+// --- Function Prototypes ---
 static void initialize_program_config(ProgramConfig *config);
 static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *config);
 static int parse_stream_start_time_option(ProgramConfig *config, const char *time_text);
@@ -188,9 +204,10 @@ static void initialize_audio_filters(const ProgramConfig *config, AudioBuffers *
 static void prime_rms_ring_buffer(AudioBuffers *buffers, ProgramState *state);
 static void process_audio_stream(ProgramConfig *config, AudioBuffers *buffers, ProgramState *state);
 static void print_periodic_debug_time(const ProgramConfig *config, ProgramState *state);
+static int can_fast_passthrough_chunk(const ProgramConfig *config, const ProgramState *state, int num_input_samples_in_chunk);
+static void write_delayed_passthrough_audio(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, const int16_t *pcm_input_chunk, int num_input_samples_in_chunk);
 static void process_input_chunk(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, int16_t* pcm_input_chunk, int num_input_samples_in_chunk);
 static void populate_main_output_buffer_sample(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, const int16_t* current_input_sample_frame, float current_filtered_sample);
-// Changed ProgramConfig to const ProgramConfig* for the next two prototypes
 static void perform_detection_and_handle_transitions(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state);
 static int should_bypass_talk_silencing_due_to_time_restriction(const ProgramConfig *config, const ProgramState *state);
 static int is_time_restricted_silence_active_at_sample(const ProgramConfig *config, int64_t sample_index);
@@ -200,7 +217,6 @@ static void flush_remaining_audio(ProgramConfig *config, AudioBuffers *buffers, 
 static void print_summary_statistics(const ProgramConfig *config, const ProgramState *state);
 static void cleanup_resources(AudioBuffers *buffers);
 
-// --- Original Static Functions (Prototypes) ---
 static void fade_out (int16_t *samples, int num_samples_per_channel, int stride); 
 static void fade_in (int16_t *samples, int num_samples_per_channel, int stride); 
 static int analyze_window (float *levels, long sample_index, int num_samples, int sample_rate); 
@@ -211,10 +227,51 @@ static void display_analysis_results (void);
 #define MINS(s,r) ((int)((s)/((r)*60))) 
 #define SECS(s,r) ((int)(((s)/(r))%60)) 
 
+static double profile_now_seconds(void) {
+#ifdef _WIN32
+    return (double) clock() / CLOCKS_PER_SEC;
+#else
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec + tv.tv_usec / 1000000.0;
+#endif
+}
+
+static int profile_env_enabled(const char *name) {
+    const char *value = getenv(name);
+    return value && value[0] && strcmp(value, "0");
+}
+
+static void profile_add_seconds(double *bucket, double started_at) {
+    if (profile_stats.enabled) {
+        *bucket += profile_now_seconds() - started_at;
+    }
+}
+
+static void print_profile_summary(const ProgramConfig *config, const ProgramState *state) {
+    if (!profile_stats.enabled) {
+        return;
+    }
+
+    fprintf(stderr,
+        "profile: total=%.3fs read=%.3fs prepare=%.3fs process_loop=%.3fs analyze_window=%.3fs shift=%.3fs fast_passthrough=%.3fs flush=%.3fs\n",
+        profile_now_seconds() - profile_stats.started_at, profile_stats.read_seconds,
+        profile_stats.prepare_seconds, profile_stats.process_seconds, profile_stats.analyze_seconds,
+        profile_stats.shift_seconds, profile_stats.fast_passthrough_seconds, profile_stats.flush_seconds);
+    fprintf(stderr, "profile: chunks=%d fast_chunks=%d windows=%d duration=%02d:%02d bypassed=%02d:%02d\n",
+        profile_stats.chunks, profile_stats.fast_chunks, state->num_analysis_windows_done,
+        MINS(state->total_samples_processed, config->sample_rate), SECS(state->total_samples_processed, config->sample_rate),
+        MINS(state->fast_passthrough_samples, config->sample_rate), SECS(state->fast_passthrough_samples, config->sample_rate));
+}
+
 int main (int argc, char **argv) {
     ProgramConfig config;
     AudioBuffers buffers;
     ProgramState state = {0}; // Initialize all fields to zero/NULL
+
+    memset(&profile_stats, 0, sizeof(profile_stats));
+    profile_stats.enabled = profile_env_enabled("SILENCER_PROFILE");
+    profile_stats.started_at = profile_now_seconds();
 
     initialize_program_config(&config);
 
@@ -269,8 +326,11 @@ int main (int argc, char **argv) {
 
     process_audio_stream(&config, &buffers, &state);
 
+    double flush_start = profile_stats.enabled ? profile_now_seconds() : 0.0;
     flush_remaining_audio(&config, &buffers, &state);
+    profile_add_seconds(&profile_stats.flush_seconds, flush_start);
     print_summary_statistics(&config, &state);
+    print_profile_summary(&config, &state);
     cleanup_resources(&buffers);
 
     if (analysis_binary_output_file) {
@@ -293,7 +353,7 @@ static void initialize_program_config(ProgramConfig *config) {
     config->tensor_input_filename = NULL; 
     config->verbose_level = 0; 
     config->quiet_mode = 0; 
-    config->time_restricted_silence_enabled = 0; // New: Default to disabled
+    config->time_restricted_silence_enabled = 0;
     config->stream_time_enabled = 0;
     config->stream_start_epoch_ms = 0;
     config->stream_time_utc_offset_minutes = 0;
@@ -328,8 +388,8 @@ static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *co
             if (!parse_stream_time_utc_offset_option(config, current_arg_str)) return 0;
             stream_time_utc_offset_follows = 0;
         } else if (time_restriction_window_follows) {
-            if (!parse_time_restriction_window(current_arg_str, &config->time_restriction_window, NULL)) {
-                fprintf(stderr, "\nError: invalid -w time restriction window \"%s\" (expected ranges like 58-10,28-40)\n", current_arg_str);
+            if (!parse_time_restriction_argument(current_arg_str, &config->time_restriction_window)) {
+                fprintf(stderr, "\nError: invalid -w value \"%s\" (expected ranges like 58-10,28-40 or an INI schedule file)\n", current_arg_str);
                 return 0;
             }
             time_restriction_window_follows = 0;
@@ -399,8 +459,8 @@ static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *co
                         break;
                     case 'w':
                         if (*next_char_in_option) {
-                            if (!parse_time_restriction_window(next_char_in_option, &config->time_restriction_window, NULL)) {
-                                fprintf(stderr, "\nError: invalid -w time restriction window \"%s\" (expected ranges like 58-10,28-40)\n", next_char_in_option);
+                            if (!parse_time_restriction_argument(next_char_in_option, &config->time_restriction_window)) {
+                                fprintf(stderr, "\nError: invalid -w value \"%s\" (expected ranges like 58-10,28-40 or an INI schedule file)\n", next_char_in_option);
                                 return 0;
                             }
                             option_char_ptr = current_arg_str + strlen(current_arg_str) - 1;
@@ -408,7 +468,7 @@ static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *co
                             time_restriction_window_follows = 1;
                         }
                         break;
-                    case 'x': // New option for time-restricted silencing
+                    case 'x':
                         config->time_restricted_silence_enabled = 1;
                         break;
                     case 'v': 
@@ -442,7 +502,7 @@ static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *co
     if (tensor_input_file_follows) { fprintf(stderr, "\nError: -d requires a tensor filename\n"); return 0; }
     if (stream_start_time_follows) { fprintf(stderr, "\nError: -T requires an ISO-8601 stream start time\n"); return 0; }
     if (stream_time_utc_offset_follows) { fprintf(stderr, "\nError: -z requires a UTC offset like +01:00\n"); return 0; }
-    if (time_restriction_window_follows) { fprintf(stderr, "\nError: -w requires minute ranges like 58-10,28-40\n"); return 0; }
+    if (time_restriction_window_follows) { fprintf(stderr, "\nError: -w requires minute ranges or an INI schedule file\n"); return 0; }
     return 1; // Success
 }
 
@@ -541,10 +601,95 @@ static void process_audio_stream(ProgramConfig *config, AudioBuffers *buffers, P
     int samples_read_this_chunk;
     size_t samples_to_read_per_fread = config->sample_rate; 
 
-    while ((samples_read_this_chunk = fread(buffers->input_buffer, sizeof(int16_t) * config->input_channels, samples_to_read_per_fread, stdin))) { 
+    for (;;) {
+        double read_start = profile_stats.enabled ? profile_now_seconds() : 0.0;
+        samples_read_this_chunk = fread(buffers->input_buffer, sizeof(int16_t) * config->input_channels, samples_to_read_per_fread, stdin);
+        profile_add_seconds(&profile_stats.read_seconds, read_start);
+
+        if (!samples_read_this_chunk) {
+            break;
+        }
+
+        profile_stats.chunks++;
         print_periodic_debug_time(config, state);
-        process_input_chunk(config, buffers, state, buffers->input_buffer, samples_read_this_chunk);
+        if (can_fast_passthrough_chunk(config, state, samples_read_this_chunk)) {
+            double passthrough_start = profile_stats.enabled ? profile_now_seconds() : 0.0;
+            write_delayed_passthrough_audio(config, buffers, state, buffers->input_buffer, samples_read_this_chunk);
+            profile_add_seconds(&profile_stats.fast_passthrough_seconds, passthrough_start);
+            profile_stats.fast_chunks++;
+        } else {
+            state->fast_passthrough_active = 0;
+            process_input_chunk(config, buffers, state, buffers->input_buffer, samples_read_this_chunk);
+        }
     }
+}
+
+static int can_fast_passthrough_chunk(const ProgramConfig *config, const ProgramState *state, int num_input_samples_in_chunk) {
+    if (!(config->time_restricted_silence_enabled && config->stream_time_enabled &&
+          config->processing_mode == PROCESSING_MODE_SILENCE_TALK &&
+          config->left_debug_output_mode == OUTPUT_AUDIO && config->right_debug_output_mode == OUTPUT_AUDIO &&
+          !analysis_binary_output_file && (state->main_output_buffer_idx == 0 || state->fast_passthrough_active))) {
+        return 0;
+    }
+
+    if (num_input_samples_in_chunk <= 0)
+        return 0;
+
+    return !is_time_restricted_window_near_with_config(config->stream_time_enabled,
+                                                       config->stream_start_epoch_ms,
+                                                       config->stream_time_utc_offset_minutes,
+                                                       state->total_samples_processed,
+                                                       config->sample_rate,
+                                                       &config->time_restriction_window,
+                                                       TIME_RESTRICTION_ANALYSIS_MARGIN_SECS) &&
+           !is_time_restricted_window_near_with_config(config->stream_time_enabled,
+                                                       config->stream_start_epoch_ms,
+                                                       config->stream_time_utc_offset_minutes,
+                                                       state->total_samples_processed + num_input_samples_in_chunk - 1,
+                                                       config->sample_rate,
+                                                       &config->time_restriction_window,
+                                                       TIME_RESTRICTION_ANALYSIS_MARGIN_SECS);
+}
+
+static void write_delayed_passthrough_audio(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, const int16_t *pcm_input_chunk, int num_input_samples_in_chunk) {
+    int delay_samples = FAST_PASSTHROUGH_DELAY_SECS * config->sample_rate;
+
+    if (!state->fast_passthrough_active) {
+        state->current_audio_mode = AUDIO_MODE_NOTHING;
+        state->music_confirmation_counter = 0;
+        state->talk_confirmation_counter = 0;
+        state->pending_state_counter = 0;
+        state->analysis_level_buffer_idx = 0;
+        state->tensor_results_buffer_count = 0;
+        state->current_rms_level = 0.0;
+        state->fast_passthrough_active = 1;
+    }
+
+    if (config->input_channels == 2) {
+        memcpy(buffers->main_output_buffer + state->main_output_buffer_idx * 2, pcm_input_chunk, num_input_samples_in_chunk * sizeof(int16_t) * 2);
+    } else {
+        for (int i = 0; i < num_input_samples_in_chunk; ++i) {
+            buffers->main_output_buffer[(state->main_output_buffer_idx + i) * 2] = pcm_input_chunk[i];
+            buffers->main_output_buffer[(state->main_output_buffer_idx + i) * 2 + 1] = pcm_input_chunk[i];
+        }
+    }
+
+    state->main_output_buffer_idx += num_input_samples_in_chunk;
+    state->total_samples_processed += num_input_samples_in_chunk;
+    state->fast_passthrough_samples += num_input_samples_in_chunk;
+
+    if (state->main_output_buffer_idx > delay_samples) {
+        int samples_to_write = state->main_output_buffer_idx - delay_samples;
+
+        fwrite(buffers->main_output_buffer, sizeof(int16_t) * 2, samples_to_write, stdout);
+        state->samples_output_audible += samples_to_write;
+        memmove(buffers->main_output_buffer, buffers->main_output_buffer + samples_to_write * 2,
+                (state->main_output_buffer_idx - samples_to_write) * sizeof(int16_t) * 2);
+        state->main_output_buffer_idx -= samples_to_write;
+    }
+
+    state->last_confirmed_sample_point = state->total_samples_processed - state->main_output_buffer_idx;
+    state->current_transition_sample_point = state->last_confirmed_sample_point;
 }
 
 // Periodically prints stream time to stderr when available, otherwise the local wall-clock time.
@@ -603,6 +748,7 @@ static void print_periodic_debug_time(const ProgramConfig *config, ProgramState 
 // Processes a single chunk of PCM input samples.
 static void process_input_chunk(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, int16_t* pcm_input_chunk, int num_input_samples_in_chunk) {
     // Convert input to mono float and apply filters
+    double prepare_start = profile_stats.enabled ? profile_now_seconds() : 0.0;
     for (int i = 0; i < num_input_samples_in_chunk; ++i) {
         // Generate mono float sample with dither
         if (config->input_channels == 2) { 
@@ -621,8 +767,10 @@ static void process_input_chunk(const ProgramConfig *config, AudioBuffers *buffe
         buffers->mono_float_samples[i] = biquad_apply_sample(&buffers->lowpass_filters[0], buffers->mono_float_samples[i]); 
 #endif
     }
+    profile_add_seconds(&profile_stats.prepare_seconds, prepare_start);
 
     // Process each sample from the filtered chunk
+    double process_start = profile_stats.enabled ? profile_now_seconds() : 0.0;
     for (int i = 0; i < num_input_samples_in_chunk; ++i) {
         // Calculate RMS level
         int rms_ring_idx = state->total_samples_processed % state->rms_ring_buffer_len; 
@@ -657,8 +805,10 @@ static void process_input_chunk(const ProgramConfig *config, AudioBuffers *buffe
             perform_detection_and_handle_transitions(config, buffers, state);
             
             // Shift analysis_level_buffer
+            double shift_start = profile_stats.enabled ? profile_now_seconds() : 0.0;
             memmove(buffers->analysis_level_buffer, buffers->analysis_level_buffer + state->analysis_step_samples, 
                     (state->analysis_level_buffer_len - state->analysis_step_samples) * sizeof(float)); 
+            profile_add_seconds(&profile_stats.shift_seconds, shift_start);
             state->analysis_level_buffer_idx -= state->analysis_step_samples; 
             state->num_analysis_windows_done++; 
         }
@@ -666,6 +816,7 @@ static void process_input_chunk(const ProgramConfig *config, AudioBuffers *buffe
         // Write confirmed audio from main_output_buffer to stdout
         write_confirmed_audio_to_stdout(config, buffers, state);
     }
+    profile_add_seconds(&profile_stats.process_seconds, process_start);
 }
 
 
@@ -717,11 +868,12 @@ static void populate_main_output_buffer_sample(const ProgramConfig *config, Audi
 }
 
 
-// Performs tensor analysis, makes detection decisions, and handles audio mode transitions.
-// Changed ProgramConfig to const ProgramConfig*
+// Performs tensor analysis, makes detection decisions, and handles transitions.
 static void perform_detection_and_handle_transitions(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state) {
     // Call analyze_window to get tensor value for the current analysis window
+    double analyze_start = profile_stats.enabled ? profile_now_seconds() : 0.0;
     int tensor_raw_value = analyze_window(buffers->analysis_level_buffer, state->total_samples_processed, state->analysis_level_buffer_len, config->sample_rate); 
+    profile_add_seconds(&profile_stats.analyze_seconds, analyze_start);
     int detected_audio_mode_this_step = AUDIO_MODE_NOTHING; // What this specific analysis step indicates
 
     // Update raw hit counters
@@ -944,8 +1096,6 @@ static int should_silence_audio_mode_at_sample(const ProgramConfig *config, int 
 
 
 // Writes confirmed audio segments from the main_output_buffer to stdout.
-// Handles silencing and keep-alive logic.
-// Changed ProgramConfig to const ProgramConfig*
 static void write_confirmed_audio_to_stdout(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state) {
     int64_t samples_in_output_buffer_before_current_input = state->total_samples_processed - state->main_output_buffer_idx;
     int samples_to_write_now = 0;
@@ -1097,7 +1247,10 @@ static void print_summary_statistics(const ProgramConfig *config, const ProgramS
     if (config->quiet_mode) return; 
 
     fprintf(stderr, "Total input duration = %i:%i\n", MINS(state->total_samples_processed, config->sample_rate), SECS(state->total_samples_processed, config->sample_rate)); 
-    if (config->verbose_level > 0 && !config->quiet_mode) fprintf(stderr, "Total windows analyzed = %d\n", state->num_analysis_windows_done); 
+    if (config->verbose_level > 0 && !config->quiet_mode) {
+        fprintf(stderr, "Total windows analyzed = %d\n", state->num_analysis_windows_done);
+        fprintf(stderr, "Analysis bypassed = %i:%i\n", MINS(state->fast_passthrough_samples, config->sample_rate), SECS(state->fast_passthrough_samples, config->sample_rate));
+    }
     
     fprintf(stderr, "Raw music hits = %d (%.1f%%), raw talk hits = %d (%.1f%%), unknowns = %d (%.1f%%)\n",
             state->raw_music_hits, state->num_analysis_windows_done ? state->raw_music_hits * 100.0 / state->num_analysis_windows_done : 0.0, 

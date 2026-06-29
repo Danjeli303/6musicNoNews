@@ -12,9 +12,12 @@
 #include <string.h>
 #include <ctype.h>
 #include <math.h>
+#include <time.h>
 
 #ifdef _WIN32
 #include <fcntl.h>
+#else
+#include <sys/time.h>
 #endif
 
 #include "4d-tensor.h"
@@ -67,7 +70,8 @@ static const char *usage =
 "                            = (raise or lower talk threshold +/- 99 points)\n"
 "           -T <iso-time>    = stream start time (e.g. HLS PROGRAM-DATE-TIME)\n"
 "           -v[<n>]          = set verbosity + [rate in seconds]\n"
-"           -w<ranges>       = with -x, active minute ranges (default 58-5,28-35)\n"
+"           -w<ranges|file>  = with -x, active minute ranges or INI schedule file\n"
+"                            = (default ranges: 58-5,28-35)\n"
 "           -x               = with -t, restricts talk skipping to :58-:05 and :28-:35 by default\n"
 "           -z<+/-HH:MM>     = UTC offset for stream time checks (e.g. +01:00)\n\n"
 " Web:      Visit www.github.com/dbry/skipper for latest version and info\n\n";
@@ -86,6 +90,7 @@ static const char *usage =
 #define MIN_MUSIC_SECS  20
 #define MAX_PEND_SECS   60
 #define OUTPUT_SECONDS  120
+#define TIME_RESTRICTION_ANALYSIS_MARGIN_SECS 60
 
 #define LOWPASS_FREQ    2000.0
 #define HIGHPASS_FREQ   250.0
@@ -97,7 +102,9 @@ static void fade_in (int16_t *samples, int num_samples, int stride);
 
 static int analyze_window (float *levels, long sample_index, int num_samples, int sample_rate);
 static int is_time_restricted_skip_active (int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window);
+static int is_time_restricted_analysis_active (int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window);
 static int should_skip_mode_at_time (int skip_mode, int mode, int time_restricted_skip_enabled, int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window);
+static void write_passthrough_audio (const int16_t *input_buffer, int input_samples, int channels, int16_t *stereo_buffer);
 static void display_histogram (const char *name, int *histogram, int count);
 static void display_analysis_results (void);
 
@@ -108,11 +115,73 @@ static int verbose, quiet;
 #define MINS(s,r) ((int)((s)/((r)*60)))
 #define SECS(s,r) ((int)(((s)/(r))%60))
 
+typedef struct {
+    int enabled;
+    int chunks;
+    int fast_chunks;
+    double started_at;
+    double read_seconds;
+    double prepare_seconds;
+    double process_seconds;
+    double analyze_seconds;
+    double shift_seconds;
+    double fast_passthrough_seconds;
+    double flush_seconds;
+} ProfileStats;
+
+static ProfileStats profile_stats;
+
+static double profile_now_seconds (void)
+{
+#ifdef _WIN32
+    return (double) clock () / CLOCKS_PER_SEC;
+#else
+    struct timeval tv;
+    gettimeofday (&tv, NULL);
+    return tv.tv_sec + tv.tv_usec / 1000000.0;
+#endif
+}
+
+static int profile_env_enabled (const char *name)
+{
+    const char *value = getenv (name);
+    return value && value [0] && strcmp (value, "0");
+}
+
+static void profile_add_seconds (double *bucket, double started_at)
+{
+    if (profile_stats.enabled)
+        *bucket += profile_now_seconds () - started_at;
+}
+
+static void print_profile_summary (int sample_rate, int64_t samples, int windows, int64_t fast_samples)
+{
+    if (!profile_stats.enabled)
+        return;
+
+    fprintf (stderr,
+        "profile: total=%.3fs read=%.3fs prepare=%.3fs process_loop=%.3fs analyze_window=%.3fs shift=%.3fs fast_passthrough=%.3fs flush=%.3fs\n",
+        profile_now_seconds () - profile_stats.started_at, profile_stats.read_seconds,
+        profile_stats.prepare_seconds, profile_stats.process_seconds, profile_stats.analyze_seconds,
+        profile_stats.shift_seconds, profile_stats.fast_passthrough_seconds, profile_stats.flush_seconds);
+    fprintf (stderr, "profile: chunks=%d fast_chunks=%d windows=%d duration=%02d:%02d bypassed=%02d:%02d\n",
+        profile_stats.chunks, profile_stats.fast_chunks, windows, MINS (samples, sample_rate), SECS (samples, sample_rate),
+        MINS (fast_samples, sample_rate), SECS (fast_samples, sample_rate));
+}
+
 static int is_time_restricted_skip_active (int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window)
 {
     return is_time_restricted_window_active_with_config (stream_time_enabled, stream_start_epoch_ms,
                                                         stream_time_utc_offset_minutes, sample_index,
                                                         sample_rate, time_restriction_window);
+}
+
+static int is_time_restricted_analysis_active (int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window)
+{
+    return is_time_restricted_window_near_with_config (stream_time_enabled, stream_start_epoch_ms,
+                                                       stream_time_utc_offset_minutes, sample_index,
+                                                       sample_rate, time_restriction_window,
+                                                       TIME_RESTRICTION_ANALYSIS_MARGIN_SECS);
 }
 
 static int should_skip_mode_at_time (int skip_mode, int mode, int time_restricted_skip_enabled, int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window)
@@ -133,6 +202,19 @@ static int should_skip_mode_at_time (int skip_mode, int mode, int time_restricte
     return 0;
 }
 
+static void write_passthrough_audio (const int16_t *input_buffer, int input_samples, int channels, int16_t *stereo_buffer)
+{
+    if (channels == 2) {
+        fwrite (input_buffer, sizeof (int16_t) * 2, input_samples, stdout);
+        return;
+    }
+
+    for (int i = 0; i < input_samples; ++i)
+        stereo_buffer [i * 2] = stereo_buffer [i * 2 + 1] = input_buffer [i];
+
+    fwrite (stereo_buffer, sizeof (int16_t) * 2, input_samples, stdout);
+}
+
 int main (int argc, char **argv)
 {
     int channels = CHANNELS, sample_rate = SAMPLE_RATE, keepalive = 0;
@@ -142,8 +224,10 @@ int main (int argc, char **argv)
     int music_hits = 0, talk_hits = 0, analysis_output_file_follows = 0, tensor_input_file_follows = 0;
     int stream_start_time_follows = 0, stream_time_utc_offset_follows = 0, time_restriction_window_follows = 0, time_restricted_skip_enabled = 0;
     int stream_time_enabled = 0, stream_time_utc_offset_minutes = 0, stream_time_utc_offset_is_set = 0;
+    int fast_time_restricted_passthrough = 0;
     int current_mode = 0, music_up_counter = 0, talk_up_counter = 0, pend_up_counter = 0, input_samples;
     int64_t num_samples = 0, transition_sample = 0, confirmed_sample = 0, samples_discarded = 0, samples_written = 0;
+    int64_t fast_passthrough_samples = 0;
     int64_t stream_start_epoch_ms = 0;
     char *analysis_output_filename = NULL, *tensor_input_filename = NULL;
     int16_t *input_buffer, *output_buffer, *crossfade_buffer;
@@ -155,6 +239,10 @@ int main (int argc, char **argv)
     TimeRestrictionWindow time_restriction_window;
     uint32_t random = 0x31415926;
     double level = 0.0;
+
+    memset (&profile_stats, 0, sizeof (profile_stats));
+    profile_stats.enabled = profile_env_enabled ("SKIPPER_PROFILE");
+    profile_stats.started_at = profile_now_seconds ();
 
     init_default_time_restriction_window (&time_restriction_window);
 
@@ -307,8 +395,8 @@ int main (int argc, char **argv)
 
                     case 'W': case 'w':
                         if ((*argv) [1]) {
-                            if (!parse_time_restriction_window (*argv + 1, &time_restriction_window, NULL)) {
-                                fprintf (stderr, "\nerror: invalid time restriction window specified with -w (expected ranges like 58-10,28-40)\n");
+                            if (!parse_time_restriction_argument (*argv + 1, &time_restriction_window)) {
+                                fprintf (stderr, "\nerror: invalid -w value (expected ranges like 58-10,28-40 or an INI schedule file)\n");
                                 return -1;
                             }
 
@@ -375,8 +463,8 @@ int main (int argc, char **argv)
             stream_time_utc_offset_follows = 0;
         }
         else if (time_restriction_window_follows) {
-            if (!parse_time_restriction_window (*argv, &time_restriction_window, NULL)) {
-                fprintf (stderr, "\nerror: invalid time restriction window specified with -w (expected ranges like 58-10,28-40)\n");
+            if (!parse_time_restriction_argument (*argv, &time_restriction_window)) {
+                fprintf (stderr, "\nerror: invalid -w value (expected ranges like 58-10,28-40 or an INI schedule file)\n");
                 return -1;
             }
 
@@ -409,7 +497,7 @@ int main (int argc, char **argv)
     }
 
     if (time_restriction_window_follows) {
-        fprintf (stderr, "\nerror: -w requires minute ranges like 58-10,28-40\n");
+        fprintf (stderr, "\nerror: -w requires minute ranges or an INI schedule file\n");
         return 1;
     }
 
@@ -426,6 +514,10 @@ int main (int argc, char **argv)
             return 1;
         }
     }
+
+    fast_time_restricted_passthrough = time_restricted_skip_enabled && stream_time_enabled &&
+        skip_mode == SKIP_TALK && left_output == OUTPUT_AUDIO && right_output == OUTPUT_AUDIO &&
+        !analysis_output_file;
 
     input_buffer = calloc (sample_rate, sizeof (int16_t) * channels);
     fsamples = calloc (sample_rate, sizeof (float));
@@ -468,7 +560,38 @@ int main (int argc, char **argv)
     biquad_apply_buffer (lowpass + 1, ring_buffer, ring_buff_len, 1);
 #endif
 
-    while ((input_samples = fread (input_buffer, sizeof (int16_t) * channels, sample_rate, stdin))) {
+    for (;;) {
+        double read_start = profile_stats.enabled ? profile_now_seconds () : 0.0;
+        input_samples = fread (input_buffer, sizeof (int16_t) * channels, sample_rate, stdin);
+        profile_add_seconds (&profile_stats.read_seconds, read_start);
+
+        if (!input_samples)
+            break;
+
+        profile_stats.chunks++;
+
+        if (fast_time_restricted_passthrough && output_buffer_index == 0 &&
+            !is_time_restricted_analysis_active (stream_time_enabled, stream_start_epoch_ms,
+                stream_time_utc_offset_minutes, num_samples, sample_rate, &time_restriction_window) &&
+            !is_time_restricted_analysis_active (stream_time_enabled, stream_start_epoch_ms,
+                stream_time_utc_offset_minutes, num_samples + input_samples - 1, sample_rate, &time_restriction_window)) {
+
+            double passthrough_start = profile_stats.enabled ? profile_now_seconds () : 0.0;
+            write_passthrough_audio (input_buffer, input_samples, channels, output_buffer);
+            profile_add_seconds (&profile_stats.fast_passthrough_seconds, passthrough_start);
+            profile_stats.fast_chunks++;
+            samples_written += input_samples;
+            fast_passthrough_samples += input_samples;
+            num_samples += input_samples;
+            confirmed_sample = num_samples;
+
+            current_mode = MODE_NOTHING;
+            music_up_counter = talk_up_counter = pend_up_counter = 0;
+            results_buffer_count = level_buffer_index = 0;
+            continue;
+        }
+
+        double prepare_start = profile_stats.enabled ? profile_now_seconds () : 0.0;
 
         if (channels == 2)
             for (int j = 0; j < input_samples; j++)
@@ -486,6 +609,10 @@ int main (int argc, char **argv)
         biquad_apply_buffer (lowpass + 0, fsamples, input_samples, 1);
         biquad_apply_buffer (lowpass + 1, fsamples, input_samples, 1);
 #endif
+
+        profile_add_seconds (&profile_stats.prepare_seconds, prepare_start);
+
+        double process_start = profile_stats.enabled ? profile_now_seconds () : 0.0;
 
         for (int j = 0; j < input_samples; j++) {
             int ring_buff_index = num_samples % ring_buff_len;
@@ -527,7 +654,9 @@ int main (int argc, char **argv)
             ++num_samples;
 
             if (level_buffer_index == level_buff_len) {
+                double analyze_start = profile_stats.enabled ? profile_now_seconds () : 0.0;
                 int tensor_value = analyze_window (level_buffer, num_samples, level_buff_len, sample_rate), detected_mode = MODE_NOTHING;
+                profile_add_seconds (&profile_stats.analyze_seconds, analyze_start);
 
                 if (tensor_value > threshold)
                     music_hits++;
@@ -690,7 +819,9 @@ int main (int argc, char **argv)
                         confirmed_sample = num_samples - ((WINDOW_SECONDS + AVERAGE_SECONDS) * sample_rate + step_samples + crossfade_buff_len) / 2;
                 }
 
+                double shift_start = profile_stats.enabled ? profile_now_seconds () : 0.0;
                 memmove (level_buffer, level_buffer + step_samples, (WINDOW_SECONDS * sample_rate - step_samples) * sizeof (float));
+                profile_add_seconds (&profile_stats.shift_seconds, shift_start);
                 level_buffer_index -= step_samples;
                 num_windows++;
             }
@@ -761,7 +892,11 @@ int main (int argc, char **argv)
                 }
             }
         }
+
+        profile_add_seconds (&profile_stats.process_seconds, process_start);
     }
+
+    double flush_start = profile_stats.enabled ? profile_now_seconds () : 0.0;
 
     if (output_buffer_index) {
         int64_t output_start_sample = num_samples - output_buffer_index;
@@ -782,15 +917,22 @@ int main (int argc, char **argv)
                 music_up_counter, talk_up_counter);
     }
 
+    profile_add_seconds (&profile_stats.flush_seconds, flush_start);
+
     if (!quiet) {
         fprintf (stderr, "total input duration = %02d:%02d\n", MINS (num_samples, sample_rate), SECS (num_samples, sample_rate));
 
-        if (verbose)
+        if (verbose) {
             fprintf (stderr, "total windows = %d\n", num_windows);
+            fprintf (stderr, "analysis bypassed = %02d:%02d\n", MINS (fast_passthrough_samples, sample_rate), SECS (fast_passthrough_samples, sample_rate));
+        }
 
-        fprintf (stderr, "raw music hits = %d (%.1f%%), raw talk hits = %d (%.1f%%), unknowns = %d (%.1f%%)\n",
-            music_hits, music_hits * 100.0 / num_windows, talk_hits, talk_hits * 100.0 / num_windows,
-            num_windows - music_hits - talk_hits, (num_windows - music_hits - talk_hits) * 100.0 / num_windows);
+        if (num_windows)
+            fprintf (stderr, "raw music hits = %d (%.1f%%), raw talk hits = %d (%.1f%%), unknowns = %d (%.1f%%)\n",
+                music_hits, music_hits * 100.0 / num_windows, talk_hits, talk_hits * 100.0 / num_windows,
+                num_windows - music_hits - talk_hits, (num_windows - music_hits - talk_hits) * 100.0 / num_windows);
+        else
+            fprintf (stderr, "raw music hits = 0 (0.0%%), raw talk hits = 0 (0.0%%), unknowns = 0 (0.0%%)\n");
         fprintf (stderr, "audio written = %02d:%02d (%.1f%%), audio discarded = %02d:%02d (%.1f%%)\n\n",
             MINS (samples_written, sample_rate), SECS (samples_written, sample_rate), samples_written * 100.0 / (samples_written + samples_discarded),
             MINS (samples_discarded, sample_rate), SECS (samples_discarded, sample_rate), samples_discarded * 100.0 / (samples_written + samples_discarded));
@@ -798,6 +940,8 @@ int main (int argc, char **argv)
         if (analysis_output_file)
             display_analysis_results ();
     }
+
+    print_profile_summary (sample_rate, num_samples, num_windows, fast_passthrough_samples);
 
     free (crossfade_buffer);
     free (output_buffer);

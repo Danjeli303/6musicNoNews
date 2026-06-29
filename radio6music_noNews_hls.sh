@@ -6,6 +6,7 @@ FIP_URL="${FIP_URL:-https://stream.radiofrance.fr/fip/fip_hifi.m3u8?id=radiofran
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SILENCER="$SCRIPT_DIR/silencer"
 SAMPLE_RATE=48000
+SILENCER_WINDOW="${NEWS_SCHEDULE:-$SCRIPT_DIR/news_schedule.ini}"
 
 OUT_DIR="${OUT_DIR:-$SCRIPT_DIR/hls_radio6music_noNews}"
 PLAYLIST="$OUT_DIR/radio6music_noNews.m3u8"
@@ -18,15 +19,17 @@ DUCK_RATIO="${DUCK_RATIO:-20}"
 FIP_FADE_OUT_MS="${FIP_FADE_OUT_MS:-700}"
 FIP_FADE_IN_MS="${FIP_FADE_IN_MS:-1800}"
 HLS_AUDIO_BITRATE="${HLS_AUDIO_BITRATE:-128k}"
+HLS_AAC_CODER="${HLS_AAC_CODER:-fast}"
 HLS_TIME="${HLS_TIME:-6}"
 HLS_LIST_SIZE="${HLS_LIST_SIZE:-20}"
 HLS_RESTART_DELAY_SECONDS="${HLS_RESTART_DELAY_SECONDS:-1}"
 HLS_CLEAN_START="${HLS_CLEAN_START:-0}"
 
 usage() {
-    printf 'Usage: %s [--check]\n' "$0"
+    printf 'Usage: %s [--check] [-w ranges-or-file]\n' "$0"
     printf 'Writes a rolling HLS audio stream to: %s\n' "$PLAYLIST"
     printf 'Set OUT_DIR=... to write the HLS files elsewhere.\n'
+    printf 'Default silencer schedule/window: %s\n' "$SILENCER_WINDOW"
 }
 
 require_command() {
@@ -104,7 +107,7 @@ run_pipeline() {
       -i "$BBC_URL" \
       $duration_args \
       -f s16le -ar "$SAMPLE_RATE" -ac 2 pipe:1 2>>"$LOG" | \
-    "$SILENCER" -t -x -v20 -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" 2>>"$LOG" | \
+    "$SILENCER" -t -x -v20 -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" -w "$SILENCER_WINDOW" 2>>"$LOG" | \
     ffmpeg \
       -hide_banner \
       -loglevel warning \
@@ -115,6 +118,7 @@ run_pipeline() {
       -filter_complex "$(mix_with_fip_filter)" \
       -map '[out]' \
       -c:a aac \
+      -aac_coder "$HLS_AAC_CODER" \
       -b:a "$HLS_AUDIO_BITRATE" \
       -f hls \
       -hls_time "$HLS_TIME" \
@@ -151,6 +155,7 @@ run_pipeline_forever() {
 
         printf 'BBC stream timestamp: %s\n' "$START_TIME" >&2
         printf 'London UTC offset: %s\n' "$LONDON_UTC_OFFSET" >&2
+        printf 'Silencer window: %s\n' "$SILENCER_WINDOW" >&2
         printf 'HLS audio bitrate: %s\n' "$HLS_AUDIO_BITRATE" >&2
         printf 'HLS segment length: %s seconds\n' "$HLS_TIME" >&2
         printf 'HLS list size: %s segments\n' "$HLS_LIST_SIZE" >&2
@@ -166,21 +171,38 @@ run_pipeline_forever() {
 }
 
 CHECK_ONLY=0
-case "${1:-}" in
-    "")
-        ;;
-    --check)
-        CHECK_ONLY=1
-        ;;
-    -h|--help)
-        usage
-        exit 0
-        ;;
-    *)
-        usage >&2
-        exit 1
-        ;;
-esac
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --check)
+            CHECK_ONLY=1
+            shift
+            ;;
+        -w|--window)
+            if [ "$#" -lt 2 ]; then
+                printf 'Error: %s requires minute ranges or a schedule file\n' "$1" >&2
+                exit 1
+            fi
+            SILENCER_WINDOW=$2
+            shift 2
+            ;;
+        -w?*)
+            SILENCER_WINDOW=${1#-w}
+            shift
+            ;;
+        --window=*)
+            SILENCER_WINDOW=${1#--window=}
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
 
 require_command curl
 require_command ffmpeg
@@ -195,6 +217,7 @@ fi
 
 printf 'Writing HLS stream to: %s\n' "$PLAYLIST"
 printf 'Log: %s\n' "$LOG"
+printf 'Silencer window: %s\n' "$SILENCER_WINDOW"
 printf 'Keep this script running while you listen.\n'
 case "$HLS_CLEAN_START" in
     1|true|TRUE|yes|YES)

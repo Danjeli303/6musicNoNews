@@ -27,6 +27,7 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY radio6music_noNews_hls.sh ./
+COPY news_schedule.ini ./
 COPY --from=build /app/silencer ./silencer
 
 RUN chmod +x ./radio6music_noNews_hls.sh
