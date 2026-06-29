@@ -1,16 +1,10 @@
 ////////////////////////////////////////////////////////////////////////////
-//                            **** SKIPPER **** //
-//                  Selective Audio Detection and Filter                  //
+//                           **** SILENCER ****                          //
+//             Selective Audio Detection and Silence Filter               //
 //                    Copyright (c) 2024 David Bryant.                    //
 //                          All Rights Reserved.                          //
 //      Distributed under the BSD Software License (see license.txt)      //
 ////////////////////////////////////////////////////////////////////////////
-
-// MODIFIED VERSION:
-// - Silences talk/music instead of skipping.
-// - Refactored for improved readability.
-// - Added -x option for time-restricted talk silencing.
-// - Corrected compiler errors and warnings.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,7 +12,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <math.h>
-#include <time.h> // Added for time-based functionality
+#include <time.h>
 
 #ifdef _WIN32
 #include <fcntl.h>
@@ -26,9 +20,9 @@
 #include <sys/time.h>
 #endif
 
-#include "4d-tensor.h" // Assumed to be in the same directory or include path
-#include "skipper.h"   // Assumed to be in the same directory or include path
-#include "biquad.h"    // Assumed to be in the same directory or include path
+#include "4d-tensor.h"
+#include "skipper.h"
+#include "biquad.h"
 #include "skipper_time.h"
 #include "skipper_tensor.h"
 
@@ -53,41 +47,40 @@
 #define AUDIO_MODE_TALK       -1 // Talk is detected
 
 static const char *sign_on = "\n"
-" SKIPPER  Selective Audio Detection and Filter (Silence Mod, Refactored, Time-Restricted) Version %.1f\n" // Modified
-" Copyright (c) 2024 David Bryant. All Rights Reserved.\n\n"; //
+" SILENCER  Time-Restricted Audio Detection and Silence Filter  Version %.1f\n"
+" Copyright (c) 2024 David Bryant. All Rights Reserved.\n\n";
 
 static const char *usage =
-" Usage:     SKIPPER [-options] < SourceAudio.pcm > StereoOutput.pcm\n\n"
+" Usage:     SILENCER [-options] < SourceAudio.pcm > StereoOutput.pcm\n\n"
 " Operation: scan source audio (stdin) using tensor discrimination to filter\n"
 "            output (stdout), silencing either music (-m) or talk (-t);\n"
 "            or output raw scan analytics for use with TENSOR-GEN util (-a)\n\n"
-" Options:  -a <file.bin>    = output analysis results to specified file\n" //
-"           -c<n>            = override default channel count of 2\n" //
-"           -d <file.tensor> = specify alternate discrimination tensor file\n" //
-"           -k               = keep-alive crossfading for long silences\n" //
-"           -l<n>            = left output override (for debug, n = 0-4:\n" //
+" Options:  -a <file.bin>    = output analysis results to specified file\n"
+"           -c<n>            = override default channel count of 2\n"
+"           -d <file.tensor> = specify alternate discrimination tensor file\n"
+"           -k               = keep-alive crossfading for long silences\n"
+"           -l<n>            = left output override (for debug, n = 0-4:\n"
 "                            = 0=audio, 1=mono, 2=filtered, 3=level, 4=tensor)\n"
-"           -m[<n>]          = silence music, with optional threshold offset\n" //
+"           -m[<n>]          = silence music, with optional threshold offset\n"
 "                            = (raise or lower music threshold +/- 99 points)\n"
-"           -n               = output only silence (silence everything)\n" //
-"           -p               = pass all audio (no silencing, default)\n" //
-"           -q               = no messaging except errors\n" //
-"           -r<n>            = right output override (for debug, n = 0-4:\n" //
+"           -n               = output only silence (silence everything)\n"
+"           -p               = pass all audio (no silencing, default)\n"
+"           -q               = no messaging except errors\n"
+"           -r<n>            = right output override (for debug, n = 0-4:\n"
 "                            = 0=audio, 1=mono, 2=filtered, 3=level, 4=tensor)\n"
-"           -s<n>            = override default sample rate of 44.1 kHz\n" //
-"           -t[<n>]          = silence talk, with optional threshold offset\n" //
+"           -s<n>            = override default sample rate of 44.1 kHz\n"
+"           -t[<n>]          = silence talk, with optional threshold offset\n"
 "                            = (raise or lower talk threshold +/- 99 points)\n"
-"           -T <iso-time>    = stream start time (e.g. HLS PROGRAM-DATE-TIME)\n" //
+"           -T <iso-time>    = stream start time (e.g. HLS PROGRAM-DATE-TIME)\n"
 "           -w<ranges|file>  = with -x, active minute ranges or INI schedule file\n"
 "                            = (default ranges: 58-5,28-35)\n"
-"           -x               = with -t, enables time-restricted talk silencing (6am-10pm, :58-:05 and :28-:35 by default)\n" // New option
-"           -v[<n>]          = set verbosity + [rate in seconds]\n" //
-"           -z<+/-HH:MM>     = UTC offset for stream debug time display (e.g. +01:00)\n\n" //
-" Web:      Visit www.github.com/dbry/skipper for latest version and info\n\n"; //
+"           -x               = with -t, enables time-restricted talk silencing\n"
+"           -v[<n>]          = set verbosity + [rate in seconds]\n"
+"           -z<+/-HH:MM>     = UTC offset for stream debug time display (e.g. +01:00)\n\n";
 
 // Default audio parameters
-#define DEFAULT_CHANNELS        2 //
-#define DEFAULT_SAMPLE_RATE     44100 //
+#define DEFAULT_CHANNELS        2
+#define DEFAULT_SAMPLE_RATE     44100
 
 // Analysis and processing parameters
 #define LEVEL_WINDOW_MS    50     // RMS level calculation window in milliseconds
@@ -97,7 +90,7 @@ static const char *usage =
 #define AVERAGING_BUFFER_COUNT   (AVERAGING_WINDOW_SECONDS*1000/ANALYSIS_STEP_MSECS) //
 
 // Timing parameters for mode switching and crossfades
-#define CROSSFADE_DURATION_SECS  2 //
+#define CROSSFADE_DURATION_SECS  2
 #define MIN_TALK_DURATION_SECS   10 // Minimum duration to confirm talk mode
 #define MIN_MUSIC_DURATION_SECS  20 // Minimum duration to confirm music mode
 #define MAX_PENDING_STATE_SECS   60 // Max duration to wait for mode confirmation before cancelling
@@ -106,8 +99,8 @@ static const char *usage =
 #define FAST_PASSTHROUGH_DELAY_SECS (ANALYSIS_WINDOW_SECONDS + AVERAGING_WINDOW_SECONDS + MIN_TALK_DURATION_SECS + CROSSFADE_DURATION_SECS)
 
 // Filter parameters
-#define LOWPASS_FILTER_FREQ    2000.0 //
-#define HIGHPASS_FILTER_FREQ   250.0 //
+#define LOWPASS_FILTER_FREQ    2000.0
+#define HIGHPASS_FILTER_FREQ   250.0
 
 #define MAX_AUDIO_CYCLES      128 // Max cycles to detect in analysis window for feature extraction
 
@@ -201,7 +194,7 @@ typedef struct {
 
 static ProfileStats profile_stats;
 
-// --- Function Prototypes (Refactored Main Logic) ---
+// --- Function Prototypes ---
 static void initialize_program_config(ProgramConfig *config);
 static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *config);
 static int parse_stream_start_time_option(ProgramConfig *config, const char *time_text);
@@ -215,7 +208,6 @@ static int can_fast_passthrough_chunk(const ProgramConfig *config, const Program
 static void write_delayed_passthrough_audio(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, const int16_t *pcm_input_chunk, int num_input_samples_in_chunk);
 static void process_input_chunk(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, int16_t* pcm_input_chunk, int num_input_samples_in_chunk);
 static void populate_main_output_buffer_sample(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, const int16_t* current_input_sample_frame, float current_filtered_sample);
-// Changed ProgramConfig to const ProgramConfig* for the next two prototypes
 static void perform_detection_and_handle_transitions(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state);
 static int should_bypass_talk_silencing_due_to_time_restriction(const ProgramConfig *config, const ProgramState *state);
 static int is_time_restricted_silence_active_at_sample(const ProgramConfig *config, int64_t sample_index);
@@ -225,7 +217,6 @@ static void flush_remaining_audio(ProgramConfig *config, AudioBuffers *buffers, 
 static void print_summary_statistics(const ProgramConfig *config, const ProgramState *state);
 static void cleanup_resources(AudioBuffers *buffers);
 
-// --- Original Static Functions (Prototypes) ---
 static void fade_out (int16_t *samples, int num_samples_per_channel, int stride); 
 static void fade_in (int16_t *samples, int num_samples_per_channel, int stride); 
 static int analyze_window (float *levels, long sample_index, int num_samples, int sample_rate); 
@@ -362,7 +353,7 @@ static void initialize_program_config(ProgramConfig *config) {
     config->tensor_input_filename = NULL; 
     config->verbose_level = 0; 
     config->quiet_mode = 0; 
-    config->time_restricted_silence_enabled = 0; // New: Default to disabled
+    config->time_restricted_silence_enabled = 0;
     config->stream_time_enabled = 0;
     config->stream_start_epoch_ms = 0;
     config->stream_time_utc_offset_minutes = 0;
@@ -477,7 +468,7 @@ static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *co
                             time_restriction_window_follows = 1;
                         }
                         break;
-                    case 'x': // New option for time-restricted silencing
+                    case 'x':
                         config->time_restricted_silence_enabled = 1;
                         break;
                     case 'v': 
@@ -877,8 +868,7 @@ static void populate_main_output_buffer_sample(const ProgramConfig *config, Audi
 }
 
 
-// Performs tensor analysis, makes detection decisions, and handles audio mode transitions.
-// Changed ProgramConfig to const ProgramConfig*
+// Performs tensor analysis, makes detection decisions, and handles transitions.
 static void perform_detection_and_handle_transitions(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state) {
     // Call analyze_window to get tensor value for the current analysis window
     double analyze_start = profile_stats.enabled ? profile_now_seconds() : 0.0;
@@ -1106,8 +1096,6 @@ static int should_silence_audio_mode_at_sample(const ProgramConfig *config, int 
 
 
 // Writes confirmed audio segments from the main_output_buffer to stdout.
-// Handles silencing and keep-alive logic.
-// Changed ProgramConfig to const ProgramConfig*
 static void write_confirmed_audio_to_stdout(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state) {
     int64_t samples_in_output_buffer_before_current_input = state->total_samples_processed - state->main_output_buffer_idx;
     int samples_to_write_now = 0;

@@ -1,258 +1,164 @@
 ## 6 Music News Skipper
 
-The `.sh` files in this repository are convenience wrappers for BBC 6 Music
-news/talk removal workflows. They use `ffmpeg`, `ffprobe`, `ffplay`, `curl`,
-`make`, and the local `skipper` or `silencer` executables. Each script builds
-the executable it needs if it is missing.
+This repo builds two PCM filters and a small set of BBC 6 Music helper
+scripts.
 
-Run any script from a shell:
+- `skipper` removes selected sections from the stream, so output duration can
+  be shorter than input duration.
+- `silencer` keeps the original duration and replaces selected sections with
+  silence.
+- The wrapper scripts use `ffmpeg`/`ffprobe` to decode files or live streams,
+  pass PCM through the local filter, then encode or play the result.
 
+The branch is configured for scheduled BBC 6 Music news removal. The default
+schedule is [news_schedule.ini](news_schedule.ini), with a 2 minute window
+before each listed bulletin time and a 5 minute window after it.
+
+## Build
+
+Requirements for local development:
+
+- C compiler with `make`
+- `ffmpeg` and `ffprobe`
+- `curl` for live HLS scripts
+- `ffplay` only for local live playback
+
+Build the C tools:
+
+```sh
+make
 ```
-./script-name.sh --help
-./script-name.sh --check
+
+Production builds use `OPTFLAGS ?= -Ofast -flto`. Override when needed:
+
+```sh
+make -B OPTFLAGS='-Ofast' skipper silencer
 ```
 
-`--check` is a smoke test. It verifies the required commands are installed,
-builds the relevant executable if needed, decodes a short amount of audio, and
-checks that the pipeline can run before starting a longer conversion or live
-stream.
+Generated binaries and local audio outputs are ignored by git. Remove build
+artifacts with:
 
-The default BBC 6 Music news timings live in `news_schedule.ini`. It uses a
-small INI format with a shared `before_minutes`/`after_minutes` window and
-separate weekday/weekend time lists. The wrappers pass this file through `-w`
-by default; `-w 58-10,28-40` still works for legacy minute-range overrides, and
-`NEWS_SCHEDULE=/path/to/file.ini` can point the wrappers at another schedule.
-
-### Recorded programme scripts
-
-`skip_6music_news.sh` processes a recorded audio file through `skipper` and
-writes a new file with detected talk/news skipped. With one input argument, it
-writes beside the input using the same extension plus `_newsskip` before the
-extension, for example `example.m4a` becomes `example_newsskip.m4a`. If you pass
-an explicit output path, its extension must match the input extension so `ffmpeg`
-exports the same container family. The script reads the programme start time
-from the input file's `date` metadata using `ffprobe`, so the recording must
-include that tag.
-
+```sh
+make clean
 ```
-./skip_6music_news.sh --check input.m4a
-./skip_6music_news.sh input.m4a
+
+## Schedule Input
+
+Scripts default to `NEWS_SCHEDULE=${repo}/news_schedule.ini`. Override with
+either a schedule file or legacy minute ranges:
+
+```sh
+NEWS_SCHEDULE=/path/to/schedule.ini ./skip_6music_news.sh input.m4a
 ./skip_6music_news.sh -w news_schedule.ini input.m4a
 ./skip_6music_news.sh -w 58-10,28-40 input.m4a
-./skip_6music_news.sh input.mp3 output_newsskip.mp3
 ```
 
-If no input is provided, the script uses its built-in default recording path.
-During conversion it prints the percentage of the input file processed. A
-matching `.log` file is written next to the output. The wrapper currently
-supports strict output for AAC/ALAC MP4-family files, MP3, FLAC, Opus/Vorbis
-OGG, and PCM WAV. It runs `skipper` with the default `news_schedule.ini`; use
-`-w`/`--window` with another schedule file or comma-separated minute ranges to
-override that for unusual bulletin timings.
+The C programs receive the schedule through `-w`. They also need stream time
+with `-T` and UTC offset with `-z` for schedule-aware filtering.
 
-`silence_6music_news.sh` has the same recorded-file interface, but it runs the
-`silencer` executable instead of `skipper`. Use it when you want the newer
-stream-time aware silencing path.
+## Recorded Files
 
+Use `skip_6music_news.sh` for offline recordings where you want news removed:
+
+```sh
+./skip_6music_news.sh --check input.m4a
+./skip_6music_news.sh input.m4a
+./skip_6music_news.sh input.m4a output_newsskip.m4a
 ```
+
+The input must contain a `date` metadata tag so the script can align the
+recording with the schedule. With one input argument, the output is written
+beside the input using `_newsskip` before the extension.
+
+Use `silence_6music_news.sh` when you want a same-duration file with news
+silenced:
+
+```sh
 ./silence_6music_news.sh --check input.m4a
-./silence_6music_news.sh -w news_schedule.ini input.m4a
 ./silence_6music_news.sh input.m4a output_silenced_talk.m4a
 ```
 
-### Testing
+Both wrappers support `--profile`, which times decode, filter, and encode
+stages separately:
 
+```sh
+./skip_6music_news.sh --profile input.m4a output.m4a
+./silence_6music_news.sh --profile input.m4a output.m4a
 ```
+
+## Live Scripts
+
+Local playback:
+
+```sh
+./play_6music_silencer.sh --check
+./play_6music_silencer.sh
+```
+
+HLS output for AWS/Caddy:
+
+```sh
+./radio6music_noNews_hls.sh --check
+./radio6music_noNews_hls.sh
+```
+
+The HLS script writes a rolling playlist to `hls_radio6music_noNews/` by
+default. Useful environment variables:
+
+- `OUT_DIR`
+- `HLS_AUDIO_BITRATE`
+- `HLS_AAC_CODER`
+- `HLS_TIME`
+- `HLS_LIST_SIZE`
+- `HLS_CLEAN_START`
+- `BBC_URL`
+- `FIP_URL`
+
+The Icecast/FIP script is still available as `radio6music_noNews_fip.sh`.
+
+AWS deployment notes are in [docs/aws-deploy.md](docs/aws-deploy.md). The Alexa
+skill scaffold is in [alexa-skill/README.md](alexa-skill/README.md).
+
+## Tests
+
+```sh
 make test
 make audio-test
 make sample-recording-test
 ```
 
-`make test` runs the C unit tests. `make audio-test` generates a temporary audio
-source with programme metadata, checks the recorded-file wrappers, verifies
-single-file conversion metadata/format preservation, verifies scheduled silence
-and pass-through behavior in `silencer`, and confirms HLS segment generation. It
-does not use live streams. `make sample-recording-test` is a local opt-in check
-for minutes 28-37 of a real iPlayer recording; run it with
-`RUN_LOCAL_SAMPLE_TEST=1` for the default local path, or set
-`SAMPLE_RECORDING=/path/to/file.m4a`.
+- `make test` runs C unit tests.
+- `make audio-test` creates temporary synthetic audio, checks wrappers, verifies
+  scheduled silence/pass-through, checks format preservation, and validates HLS
+  packaging. It does not use live streams.
+- `make sample-recording-test` is opt-in for a local real recording. Set
+  `RUN_LOCAL_SAMPLE_TEST=1` and optionally `SAMPLE_RECORDING=/path/to/file.m4a`.
 
-### Live playback scripts
+## Code Map
 
-`play_6music_silencer.sh` plays the live BBC 6 Music HLS stream through
-`silencer`, removes detected talk, and sends the resulting raw PCM audio to
-`ffplay` for local listening.
+- `skipper.c`: original skip/remove filter with schedule-aware fast passthrough
+  outside news windows.
+- `silencer.c`: same classifier path, but writes silence instead of shortening
+  the stream; also bypasses analysis outside scheduled windows while preserving
+  timing delay.
+- `skipper_time.c` / `skipper_time.h`: ISO-8601 parsing, UTC offset parsing,
+  INI schedule parsing, and active-window checks.
+- `skipper_tensor.c` / `skipper_tensor.h`: embedded tensor loading helpers.
+- `4d-tensor.h`: embedded classifier tensor.
+- `audio_validation_tests.sh`: end-to-end wrapper/audio validation.
+- `skipper_tests.c` and `silencer_tests.c`: C unit tests.
+- `Dockerfile`, `docker-compose.yml`, and `docker/caddy/Caddyfile`: AWS HLS
+  deployment packaging.
 
-```
-./play_6music_silencer.sh --check
-./play_6music_silencer.sh
-./play_6music_silencer.sh -w news_schedule.ini
-URL=https://example.com/stream.m3u8 ./play_6music_silencer.sh
-```
+## C Profiling
 
-The script reads `#EXT-X-PROGRAM-DATE-TIME` from the HLS playlist and uses the
-current Europe/London UTC offset so the silencer can align scheduled news
-windows with the station clock.
+Set these environment variables when running the C binaries directly:
 
-`radio6music_noNews_fip.sh` plays live BBC 6 Music with detected talk removed
-and mixes in FIP during the silent gaps. FIP is sidechain-ducked by the BBC
-audio, so it fades down when 6 Music returns.
-
-```
-./radio6music_noNews_fip.sh --check
-./radio6music_noNews_fip.sh
-./radio6music_noNews_fip.sh -w news_schedule.ini
-BBC_URL=https://example.com/bbc.m3u8 FIP_URL=https://example.com/fip.m3u8 ./radio6music_noNews_fip.sh
+```sh
+SKIPPER_PROFILE=1 ./skipper ...
+SILENCER_PROFILE=1 ./silencer ...
 ```
 
-For an Icecast output, run it with `-AWS` and set the Icecast URL if the default
-does not match your server:
-
-```
-ICECAST_SOURCE_PASSWORD=password ./radio6music_noNews_fip.sh -AWS
-AWS_ICECAST_URL=icecast://source:password@host:8000/mount.mp3 ./radio6music_noNews_fip.sh -AWS
-```
-
-Optional environment variables include `FIP_VOLUME`, `DUCK_THRESHOLD`,
-`DUCK_RATIO`, `FIP_FADE_OUT_MS`, `FIP_FADE_IN_MS`, `AWS_AUDIO_BITRATE`, and
-`AWS_RESTART_DELAY_SECONDS`.
-
-In AWS mode, the script restarts the stream pipeline after a source or Icecast
-connection failure. `AWS_RESTART_DELAY_SECONDS` controls the pause between
-restart attempts.
-
-### AWS deployment
-
-This branch includes a Docker Compose deployment for EC2. It runs an HLS stream
-pipeline and Caddy HTTPS proxy. The Alexa-ready HLS stream URL is:
-
-```
-https://PUBLIC_HOST/hls/radio6music_noNews.m3u8
-```
-
-For first AWS testing, `PUBLIC_HOST` can be an `sslip.io` hostname such as
-`203.0.113.10.sslip.io`. See `docs/aws-deploy.md` for the full runbook and
-`alexa-skill/README.md` for the minimal Alexa skill scaffold.
-
-`radio6music_noNews_hls.sh` creates a rolling HLS playlist and `.ts`
-segments for Caddy or another player that can read HLS files. Keep it
-running while listening; it continuously refreshes the playlist.
-
-```
-./radio6music_noNews_hls.sh --check
-./radio6music_noNews_hls.sh
-./radio6music_noNews_hls.sh -w news_schedule.ini
-OUT_DIR=/path/visible/to/hls ./radio6music_noNews_hls.sh
-```
-
-By default it writes to `hls_radio6music_noNews/` in this repository. The
-main playlist is `radio6music_noNews.m3u8`, and logs are written to
-`radio6music_noNews_hls.log`. Useful tuning variables include `OUT_DIR`,
-`HLS_AUDIO_BITRATE`, `HLS_TIME`, `HLS_LIST_SIZE`, `HLS_RESTART_DELAY_SECONDS`,
-`HLS_CLEAN_START`, `BBC_URL`, `FIP_URL`, and the FIP ducking controls listed
-above. Normal restarts preserve the last good playlist and segments so players
-can keep buffering while the pipeline reconnects. Set `HLS_CLEAN_START=1` only
-when you intentionally want to discard the existing HLS window at startup.
-
-## About Skipper
-
-This project is based on David Bryant's original **Skipper** work, a selective
-audio detection and filter tool.
-
-Copyright (c) 2024 David Bryant.
-
-All Rights Reserved.
-
-Distributed under the [BSD Software License](https://github.com/dbry/skipper/blob/main/LICENSE).
-
-**Skipper** is a simple machine-learning-trained audio filter that can
-differentiate between musical material and talking in audio streams
-and, optionally, filter out (i.e., skip) one or the other.
-
-The original project was developed for listening to and archiving FM radio and
-Internet music programme streams. These are useful for discovering new music,
-learning about a local music scene, and listening to interviews with artists and
-others in the music community. The difficulty is that replayed programmes can
-contain repeated or outdated dialogue, such as upcoming concert listings or
-finished pledge drives, and sometimes the dialogue is simply not wanted.
-
-By default, **Skipper** acts as a filter, consuming raw PCM audio, stereo or
-mono 16-bit, from `stdin` and writing it unchanged, except always stereo, to
-`stdout`. It detects music/talk transitions and reports those timestamps to
-`stderr`.
-
-Specifying `-t` skips over detected talk and passes only music, with crossfades
-to smooth transitions. Conversely, `-m` skips over detected music and passes
-only the talking portions, which is useful for checking the detection quality.
-
-## Caveats
-
-It is not possible to distinguish music and talk with 100% accuracy. Detection
-becomes difficult when a DJ talks over music, when music includes speech-like
-singing or spoken samples, or when a genre has a temporal acoustic profile that
-resembles speech. The command-line options allow threshold adjustment when too
-much talk is kept or too much music is skipped.
-
-## Building
-
-The Makefile builds the programs on Linux and similar setups.
-
-The `skipper` executable is the core original filter. The `silencer` executable
-is used by the BBC 6 Music helper scripts in this branch. The `tensor-gen` and
-`bin2c` executables are used, along with the `-a` option of `skipper`, for
-generating tensor files from training audio data.
-
-## Skipper usage
-
-There are many ways to use **Skipper**, but a common approach is to use
-[FFmpeg](https://www.ffmpeg.org/) as the source because it handles many formats
-and works well with pipes. The output of `ffmpeg` can be piped directly to
-`skipper`, then to an encoder such as [lame](https://lame.sourceforge.io/):
-
-```
-ffmpeg -i sourcefile.ext -f s16le - | ./skipper -t | lame -r - music-only.mp3
-```
-
-The output of `skipper` can also be piped directly to
-[FFplay](https://www.ffmpeg.org/) for immediate playback. In this case, `-k`
-adds keep-alive crossfades during long skips so playback does not underrun.
-
-```
-ffmpeg -i sourcefile.ext -f s16le - | ./skipper -tk | ffplay - -f s16le -ch_layout stereo
-```
-
-Currently, **Skipper** is available as a command-line filter.
-
-## Help
-
-```
- SKIPPER  Selective Audio Detection and Filter  Version 0.1
- Copyright (c) 2024 David Bryant. All Rights Reserved.
-
- Usage:     SKIPPER [-options] < SourceAudio.pcm > StereoOutput.pcm
-
- Operation: scan source audio (`stdin`) using tensor discrimination to filter
-            output (`stdout`), skipping either music (-m) or talk (-t); or
-            output raw scan analytics for use with TENSOR-GEN util (-a)
-
- Options:  -a <file.bin>    = output analysis results to specified file
-           -c<n>            = override default channel count of 2
-           -d <file.tensor> = specify alternate discrimination tensor file
-           -k               = keep-alive crossfading for long skips
-           -l<n>            = left output override (for debug, n = 1-4:
-                            = 1=mono, 2=filtered, 3=level, 4=tensor)
-           -m[<n>]          = skip over music, with optional threshold offset
-                            = (raise or lower music threshold +/- 99 points)
-           -n               = no audio output (skip everything)
-           -p               = pass all audio (no skipping, default)
-           -q               = no messaging except errors
-           -r<n>            = right output override (for debug, n = 1-4:
-                            = 1=mono, 2=filtered, 3=level, 4=tensor)
-           -s<n>            = override default sample rate of 44.1 kHz
-           -t[<n>]          = skip over talk, with optional threshold offset
-                            = (raise or lower talk threshold +/- 99 points)
-           -v[<n>]          = set verbosity + [rate in seconds]
-
- Web:      Visit www.github.com/dbry/skipper for latest version and info
-
-```
+The profile summary is written to `stderr` and includes read, prepare,
+process-loop, `analyze_window`, buffer-shift, fast-passthrough, and flush
+timings.
