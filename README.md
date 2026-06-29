@@ -114,8 +114,6 @@ default. Useful environment variables:
 - `BBC_URL`
 - `FIP_URL`
 
-The Icecast/FIP script is still available as `radio6music_noNews_fip.sh`.
-
 AWS deployment notes are in [docs/aws-deploy.md](docs/aws-deploy.md). The Alexa
 skill scaffold is in [alexa-skill/README.md](alexa-skill/README.md).
 
