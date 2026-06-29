@@ -68,7 +68,7 @@ docker compose version
 Clone the repo:
 
 ```
-git clone -b NewsSchedule git@github.com:Danjeli303/6musicNoNews.git skipper
+git clone -b main git@github.com:Danjeli303/6musicNoNews.git skipper
 cd skipper
 ```
 
