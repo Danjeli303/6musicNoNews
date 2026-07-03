@@ -103,7 +103,9 @@ HLS output for AWS/Caddy:
 ```
 
 The HLS script writes a rolling playlist to `hls_radio6music_noNews/` by
-default. Useful environment variables:
+default. The FIP stream is opened and mixed only during the configured news
+schedule, using the same `NEWS_SCHEDULE`/`-w` window as the BBC silencer.
+Useful environment variables:
 
 - `OUT_DIR`
 - `HLS_AUDIO_BITRATE`

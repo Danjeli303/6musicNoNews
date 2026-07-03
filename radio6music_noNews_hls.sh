@@ -5,6 +5,7 @@ BBC_URL="${BBC_URL:-http://as-hls-ww-live.akamaized.net/pool_81827798/live/ww/bb
 FIP_URL="${FIP_URL:-https://stream.radiofrance.fr/fip/fip_hifi.m3u8?id=radiofrance}"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SILENCER="$SCRIPT_DIR/silencer"
+SCHEDULE_STATE="$SCRIPT_DIR/hls_schedule_state"
 SAMPLE_RATE=48000
 SILENCER_WINDOW="${NEWS_SCHEDULE:-$SCRIPT_DIR/news_schedule.ini}"
 
@@ -12,6 +13,7 @@ OUT_DIR="${OUT_DIR:-$SCRIPT_DIR/hls_radio6music_noNews}"
 PLAYLIST="$OUT_DIR/radio6music_noNews.m3u8"
 SEGMENT_PATTERN="$OUT_DIR/radio6music_noNews_%05d.ts"
 LOG="$OUT_DIR/radio6music_noNews_hls.log"
+FIP_FIFO="$OUT_DIR/radio6music_noNews_fip.pcm"
 
 FIP_VOLUME="${FIP_VOLUME:-0.85}"
 DUCK_THRESHOLD="${DUCK_THRESHOLD:-0.002}"
@@ -51,6 +53,18 @@ ensure_silencer() {
     fi
 }
 
+ensure_schedule_state() {
+    if [ ! -x "$SCHEDULE_STATE" ]; then
+        require_command make
+        make -C "$SCRIPT_DIR" hls_schedule_state
+    fi
+
+    if [ ! -x "$SCHEDULE_STATE" ]; then
+        printf 'Error: schedule-state helper was not found at %s\n' "$SCHEDULE_STATE" >&2
+        exit 1
+    fi
+}
+
 get_london_utc_offset() {
     TZ=Europe/London date +%z | sed 's/^\([+-][0-9][0-9]\)\([0-9][0-9]\)$/\1:\2/'
 }
@@ -67,6 +81,14 @@ get_stream_start_time() {
     printf '%s\n' "$start_time"
 }
 
+get_fip_schedule_state() {
+    "$SCHEDULE_STATE" --local "$SILENCER_WINDOW" "$1"
+}
+
+get_stream_start_schedule_state() {
+    "$SCHEDULE_STATE" --from-iso "$SILENCER_WINDOW" "$START_TIME" "$LONDON_UTC_OFFSET"
+}
+
 mix_with_fip_filter() {
     printf '[0:a]aformat=sample_fmts=fltp:channel_layouts=stereo,asplit=2[bbc][sc];'
     printf '[1:a]aresample=%s,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=%s[fip];' "$SAMPLE_RATE" "$FIP_VOLUME"
@@ -80,7 +102,7 @@ ensure_output_dir() {
 
 clean_output_dir() {
     ensure_output_dir
-    rm -f "$PLAYLIST" "$OUT_DIR"/radio6music_noNews_*.ts "$LOG"
+    rm -f "$PLAYLIST" "$OUT_DIR"/radio6music_noNews_*.ts "$LOG" "$FIP_FIFO"
 }
 
 ffmpeg_live_input_args() {
@@ -93,28 +115,93 @@ ffmpeg_live_input_args() {
       -rw_timeout 15000000
 }
 
-run_pipeline() {
-    duration_args=
-    if [ "${1:-}" != "" ]; then
-        duration_args="-t $1"
-    fi
-
+run_bbc_input_to_silencer() {
     # shellcheck disable=SC2086
     ffmpeg \
       -hide_banner \
       -loglevel warning \
       $(ffmpeg_live_input_args) \
       -i "$BBC_URL" \
-      $duration_args \
-      -f s16le -ar "$SAMPLE_RATE" -ac 2 pipe:1 2>>"$LOG" | \
+      -vn \
+      $PIPELINE_DURATION_ARGS \
+      -f s16le -ar "$SAMPLE_RATE" -ac 2 pipe:1 2>>"$LOG"
+}
+
+prepare_fip_fifo() {
+    if [ -e "$FIP_FIFO" ] && [ ! -p "$FIP_FIFO" ]; then
+        printf 'Error: FIP FIFO path exists and is not a FIFO: %s\n' "$FIP_FIFO" >&2
+        exit 1
+    fi
+
+    if [ ! -p "$FIP_FIFO" ]; then
+        mkfifo "$FIP_FIFO"
+    fi
+}
+
+stream_silence_pcm() {
+    ffmpeg \
+      -hide_banner \
+      -loglevel warning \
+      -re \
+      -f lavfi \
+      -i "anullsrc=r=$SAMPLE_RATE:cl=stereo" \
+      -t "$1" \
+      -f s16le -ar "$SAMPLE_RATE" -ac 2 pipe:1 2>>"$LOG"
+}
+
+stream_fip_pcm() {
+    # shellcheck disable=SC2086
+    ffmpeg \
+      -hide_banner \
+      -loglevel warning \
+      $(ffmpeg_live_input_args) \
+      -i "$FIP_URL" \
+      -vn \
+      -t "$1" \
+      -f s16le -ar "$SAMPLE_RATE" -ac 2 pipe:1 2>>"$LOG"
+}
+
+write_scheduled_fip_pcm() {
+    current_epoch=$START_LOCAL_EPOCH_SECONDS
+
+    while :; do
+        schedule_state=$(get_fip_schedule_state "$current_epoch") || {
+            printf 'Error: invalid FIP schedule/window: %s\n' "$SILENCER_WINDOW" >&2
+            exit 1
+        }
+
+        set -- $schedule_state
+        fip_state=$1
+        schedule_duration=$2
+
+        printf 'FIP feed: %s for %s seconds.\n' "$fip_state" "$schedule_duration" >&2
+
+        if [ "$fip_state" = active ]; then
+            stream_fip_pcm "$schedule_duration"
+        else
+            stream_silence_pcm "$schedule_duration"
+        fi
+
+        current_epoch=$((current_epoch + schedule_duration))
+    done
+}
+
+stop_fip_feed() {
+    if [ "${FIP_FEED_PID:-}" != "" ] && kill -0 "$FIP_FEED_PID" >/dev/null 2>&1; then
+        kill "$FIP_FEED_PID" >/dev/null 2>&1 || true
+        wait "$FIP_FEED_PID" 2>/dev/null || true
+    fi
+}
+
+run_stable_mix_pipeline() {
+    run_bbc_input_to_silencer | \
     "$SILENCER" -t -x -v20 -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" -w "$SILENCER_WINDOW" 2>>"$LOG" | \
     ffmpeg \
       -hide_banner \
       -loglevel warning \
       -re \
       -f s16le -ar "$SAMPLE_RATE" -ac 2 -i pipe:0 \
-      $(ffmpeg_live_input_args) \
-      -i "$FIP_URL" \
+      -f s16le -ar "$SAMPLE_RATE" -ac 2 -i "$FIP_FIFO" \
       -filter_complex "$(mix_with_fip_filter)" \
       -map '[out]' \
       -c:a aac \
@@ -129,9 +216,31 @@ run_pipeline() {
       "$PLAYLIST" 2>>"$LOG"
 }
 
+run_pipeline() {
+    if [ "${RUN_PIPELINE_DURATION_OVERRIDE:-}" != "" ]; then
+        PIPELINE_DURATION_ARGS="-t $RUN_PIPELINE_DURATION_OVERRIDE"
+    else
+        PIPELINE_DURATION_ARGS=
+    fi
+
+    prepare_fip_fifo
+    write_scheduled_fip_pcm >"$FIP_FIFO" &
+    FIP_FEED_PID=$!
+
+    if run_stable_mix_pipeline; then
+        pipeline_status=0
+    else
+        pipeline_status=$?
+    fi
+
+    stop_fip_feed
+    rm -f "$FIP_FIFO"
+    return "$pipeline_status"
+}
+
 run_check() {
     clean_output_dir
-    run_pipeline 12
+    RUN_PIPELINE_DURATION_OVERRIDE=12 run_pipeline
 
     if [ ! -s "$PLAYLIST" ]; then
         printf 'Error: HLS playlist was not created: %s\n' "$PLAYLIST" >&2
@@ -152,10 +261,13 @@ run_pipeline_forever() {
     while :; do
         START_TIME=$(get_stream_start_time)
         LONDON_UTC_OFFSET=$(get_london_utc_offset)
+        set -- $(get_stream_start_schedule_state)
+        START_LOCAL_EPOCH_SECONDS=$1
 
         printf 'BBC stream timestamp: %s\n' "$START_TIME" >&2
         printf 'London UTC offset: %s\n' "$LONDON_UTC_OFFSET" >&2
         printf 'Silencer window: %s\n' "$SILENCER_WINDOW" >&2
+        printf 'FIP schedule: %s\n' "$SILENCER_WINDOW" >&2
         printf 'HLS audio bitrate: %s\n' "$HLS_AUDIO_BITRATE" >&2
         printf 'HLS segment length: %s seconds\n' "$HLS_TIME" >&2
         printf 'HLS list size: %s segments\n' "$HLS_LIST_SIZE" >&2
@@ -206,11 +318,15 @@ done
 
 require_command curl
 require_command ffmpeg
+require_command mkfifo
 ensure_silencer
+ensure_schedule_state
 
 if [ "$CHECK_ONLY" -eq 1 ]; then
     START_TIME=$(get_stream_start_time)
     LONDON_UTC_OFFSET=$(get_london_utc_offset)
+    set -- $(get_stream_start_schedule_state)
+    START_LOCAL_EPOCH_SECONDS=$1
     run_check
     exit 0
 fi

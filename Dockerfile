@@ -12,7 +12,7 @@ WORKDIR /app
 COPY Makefile ./
 COPY *.c *.h ./
 
-RUN make silencer
+RUN make silencer hls_schedule_state
 
 FROM debian:bookworm-slim
 
@@ -29,6 +29,7 @@ WORKDIR /app
 COPY radio6music_noNews_hls.sh ./
 COPY news_schedule.ini ./
 COPY --from=build /app/silencer ./silencer
+COPY --from=build /app/hls_schedule_state ./hls_schedule_state
 
 RUN chmod +x ./radio6music_noNews_hls.sh
 
