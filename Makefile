@@ -4,7 +4,7 @@ CC := gcc
 # Fastest in the news-window native profile benchmark; override if needed.
 OPTFLAGS ?= -Ofast -flto
 
-utils := skipper tensor-gen bin2c silencer hls_schedule_state
+utils := skipper tensor-gen bin2c silencer schedule_state
 tests := skipper_tests silencer_tests
 
 .PHONY: all test audio-test sample-recording-test clean
@@ -26,8 +26,8 @@ bin2c: bin2c.c
 silencer:  biquad.c lzwlib.c skipper.h biquad.h lzwlib.h 4d-tensor.h $(skipper_common_headers) $(skipper_common) silencer.c
 	$(CC) $(CFLAGS) silencer.c biquad.c lzwlib.c $(skipper_common) $(OPTFLAGS) -lm -o silencer
 
-hls_schedule_state: hls_schedule_state.c skipper_time.c skipper_time.h
-	$(CC) $(CFLAGS) hls_schedule_state.c skipper_time.c $(OPTFLAGS) -lm -o hls_schedule_state
+schedule_state: schedule_state.c skipper_time.c skipper_time.h
+	$(CC) $(CFLAGS) schedule_state.c skipper_time.c $(OPTFLAGS) -lm -o schedule_state
 
 skipper_tests: skipper_tests.c skipper.c biquad.c lzwlib.c $(skipper_common) skipper.h biquad.h lzwlib.h 4d-tensor.h $(skipper_common_headers)
 	$(CC) $(CFLAGS) skipper_tests.c biquad.c lzwlib.c $(skipper_common) -Wall -Wextra -lm -o skipper_tests
@@ -46,4 +46,4 @@ sample-recording-test: skipper
 	./sample_recording_tests.sh
 
 clean:
-	rm -f skipper tensor-gen bin2c silencer hls_schedule_state $(tests)
+	rm -f skipper tensor-gen bin2c silencer schedule_state $(tests)

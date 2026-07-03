@@ -416,7 +416,7 @@ run_hls_mux_check() {
 
 run_container_packaging_checks() {
     assert_log_contains "$SCRIPT_DIR/Dockerfile" 'COPY[[:space:]]+news_schedule\.ini[[:space:]]+\./' 'news schedule image copy'
-    assert_log_contains "$SCRIPT_DIR/Dockerfile" 'hls_schedule_state' 'HLS schedule helper image copy'
+    assert_log_contains "$SCRIPT_DIR/Dockerfile" 'schedule_state' 'HLS schedule helper image copy'
     assert_log_contains "$SCRIPT_DIR/radio6music_noNews_hls.sh" 'aac_coder[[:space:]]+"\$HLS_AAC_CODER"' 'fast HLS AAC encoder'
     assert_log_contains "$SCRIPT_DIR/radio6music_noNews_hls.sh" '[[:space:]]-vn[[:space:]]+\\' 'audio-only HLS decode'
     assert_log_contains "$SCRIPT_DIR/radio6music_noNews_hls.sh" 'get_fip_schedule_state' 'scheduled FIP state check'

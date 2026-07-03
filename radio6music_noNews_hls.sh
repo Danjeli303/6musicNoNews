@@ -5,7 +5,7 @@ BBC_URL="${BBC_URL:-http://as-hls-ww-live.akamaized.net/pool_81827798/live/ww/bb
 FIP_URL="${FIP_URL:-https://stream.radiofrance.fr/fip/fip_hifi.m3u8?id=radiofrance}"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SILENCER="$SCRIPT_DIR/silencer"
-SCHEDULE_STATE="$SCRIPT_DIR/hls_schedule_state"
+SCHEDULE_STATE="$SCRIPT_DIR/schedule_state"
 SAMPLE_RATE=48000
 SILENCER_WINDOW="${NEWS_SCHEDULE:-$SCRIPT_DIR/news_schedule.ini}"
 
@@ -56,7 +56,7 @@ ensure_silencer() {
 ensure_schedule_state() {
     if [ ! -x "$SCHEDULE_STATE" ]; then
         require_command make
-        make -C "$SCRIPT_DIR" hls_schedule_state
+        make -C "$SCRIPT_DIR" schedule_state
     fi
 
     if [ ! -x "$SCHEDULE_STATE" ]; then
