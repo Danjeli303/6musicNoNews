@@ -125,7 +125,9 @@ The HLS stream uses AAC segments with `HLS_AUDIO_BITRATE=128k`,
 `HLS_TIME=6`, and `HLS_LIST_SIZE=20` by default. It is served directly by Caddy
 from the shared `hls_data` volume. The FIP stream is opened and mixed only
 during the configured news schedule, using the same `NEWS_SCHEDULE`/`-w` window
-as the BBC silencer. Set `HLS_RESTART_DELAY_SECONDS` in `.env` if
+as the BBC silencer. `HLS_INPUT_THREAD_QUEUE_SIZE=2048` gives the stable mixer
+raw-input buffering without changing the public HLS window. Set
+`HLS_RESTART_DELAY_SECONDS` in `.env` if
 you want a longer or shorter pause between restart attempts after an upstream
 stream failure; the default is `1` second so transient failures recover quickly.
 Restarts keep the last good playlist and segments in place for continuity. Set

@@ -24,6 +24,7 @@ HLS_AUDIO_BITRATE="${HLS_AUDIO_BITRATE:-128k}"
 HLS_AAC_CODER="${HLS_AAC_CODER:-fast}"
 HLS_TIME="${HLS_TIME:-6}"
 HLS_LIST_SIZE="${HLS_LIST_SIZE:-20}"
+HLS_INPUT_THREAD_QUEUE_SIZE="${HLS_INPUT_THREAD_QUEUE_SIZE:-2048}"
 HLS_RESTART_DELAY_SECONDS="${HLS_RESTART_DELAY_SECONDS:-1}"
 HLS_CLEAN_START="${HLS_CLEAN_START:-0}"
 
@@ -121,6 +122,7 @@ run_bbc_input_to_silencer() {
       -hide_banner \
       -loglevel warning \
       $(ffmpeg_live_input_args) \
+      -thread_queue_size "$HLS_INPUT_THREAD_QUEUE_SIZE" \
       -i "$BBC_URL" \
       -vn \
       $PIPELINE_DURATION_ARGS \
@@ -142,7 +144,6 @@ stream_silence_pcm() {
     ffmpeg \
       -hide_banner \
       -loglevel warning \
-      -re \
       -f lavfi \
       -i "anullsrc=r=$SAMPLE_RATE:cl=stereo" \
       -t "$1" \
@@ -155,6 +156,7 @@ stream_fip_pcm() {
       -hide_banner \
       -loglevel warning \
       $(ffmpeg_live_input_args) \
+      -thread_queue_size "$HLS_INPUT_THREAD_QUEUE_SIZE" \
       -i "$FIP_URL" \
       -vn \
       -t "$1" \
@@ -200,7 +202,9 @@ run_stable_mix_pipeline() {
       -hide_banner \
       -loglevel warning \
       -re \
+      -thread_queue_size "$HLS_INPUT_THREAD_QUEUE_SIZE" \
       -f s16le -ar "$SAMPLE_RATE" -ac 2 -i pipe:0 \
+      -thread_queue_size "$HLS_INPUT_THREAD_QUEUE_SIZE" \
       -f s16le -ar "$SAMPLE_RATE" -ac 2 -i "$FIP_FIFO" \
       -filter_complex "$(mix_with_fip_filter)" \
       -map '[out]' \
@@ -271,6 +275,7 @@ run_pipeline_forever() {
         printf 'HLS audio bitrate: %s\n' "$HLS_AUDIO_BITRATE" >&2
         printf 'HLS segment length: %s seconds\n' "$HLS_TIME" >&2
         printf 'HLS list size: %s segments\n' "$HLS_LIST_SIZE" >&2
+        printf 'HLS input queue size: %s packets\n' "$HLS_INPUT_THREAD_QUEUE_SIZE" >&2
         ensure_output_dir
         if run_pipeline; then
             printf 'HLS pipeline ended; restarting in %s seconds.\n' "$HLS_RESTART_DELAY_SECONDS" >&2

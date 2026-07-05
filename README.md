@@ -112,6 +112,7 @@ Useful environment variables:
 - `HLS_AAC_CODER`
 - `HLS_TIME`
 - `HLS_LIST_SIZE`
+- `HLS_INPUT_THREAD_QUEUE_SIZE`
 - `HLS_CLEAN_START`
 - `BBC_URL`
 - `FIP_URL`
