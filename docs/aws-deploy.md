@@ -171,6 +171,26 @@ Restart everything:
 docker compose restart
 ```
 
+To restart the entire Compose stack automatically every day, make sure the
+helper is executable and add it to the instance user's crontab. This example
+restarts both `hls-streamer` and `caddy` daily at 04:00 in the instance's local
+time:
+
+```
+chmod +x /home/ubuntu/skipper/restart_stream.sh
+crontab -e
+```
+
+Add:
+
+```
+0 4 * * * /home/ubuntu/skipper/restart_stream.sh >> /home/ubuntu/skipper/restart_stream.log 2>&1
+```
+
+Adjust `/home/ubuntu/skipper` if the repository was cloned elsewhere. The
+script changes to its own directory before running Compose, so it uses this
+deployment's `docker-compose.yml` and `.env` file.
+
 Rebuild after pulling repo changes:
 
 ```
