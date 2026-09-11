@@ -457,6 +457,25 @@ static void test_parse_iso8601_timestamp_ms(void)
     EXPECT_FALSE(parse_iso8601_timestamp_ms("2024-01-01T24:00:00Z", &epoch_ms, &offset));
 }
 
+static void test_schedule_sample_index(void)
+{
+    int offset = 0;
+    int64_t stream_start = parse_epoch_ms_or_fail("2026-06-20T06:27:00Z", &offset);
+    TimeRestrictionWindow window;
+
+    EXPECT_EQ_I64(9000, schedule_sample_index(0, 1000, 3500, 8000, 9000, 1000));
+    EXPECT_EQ_I64(2500, schedule_sample_index(1, 1000, 3500, 8000, 8000, 1000));
+    EXPECT_EQ_I64(2100, schedule_sample_index(1, 1000, 3500, 8000, 7600, 1000));
+    EXPECT_EQ_I64(9000, schedule_sample_index(1, -1, 3500, 8000, 9000, 1000));
+    EXPECT_TRUE(monotonic_clock_ms() >= 0);
+
+    init_default_time_restriction_window(&window);
+    EXPECT_FALSE(is_time_restricted_window_active_with_config(1, stream_start, 0,
+        schedule_sample_index(1, 1000, 60000, 0, 0, 1000), 1000, &window));
+    EXPECT_TRUE(is_time_restricted_window_active_with_config(1, stream_start, 0,
+        schedule_sample_index(1, 1000, 61000, 0, 0, 1000), 1000, &window));
+}
+
 static void test_time_restricted_skip_window(void)
 {
     int offset = 0;
@@ -790,6 +809,9 @@ static void test_program_main_argument_validation(void)
     char bad_window0[] = "skipper";
     char bad_window1[] = "-w0-60";
     char *bad_window[] = { bad_window0, bad_window1 };
+    char clock_without_time0[] = "skipper";
+    char clock_without_time1[] = "-e";
+    char *clock_without_time[] = { clock_without_time0, clock_without_time1 };
     char extra0[] = "skipper";
     char extra1[] = "extra";
     char *extra[] = { extra0, extra1 };
@@ -842,6 +864,9 @@ static void test_program_main_argument_validation(void)
     run = run_skipper_with_input(2, bad_window, &no_input, 0, 1);
     EXPECT_TRUE(run.status != 0);
     free(run.output);
+    run = run_skipper_with_input(2, clock_without_time, &no_input, 0, 1);
+    EXPECT_TRUE(run.status != 0);
+    free(run.output);
     run = run_skipper_with_input(2, extra, &no_input, 0, 1);
     EXPECT_TRUE(run.status != 0);
     free(run.output);
@@ -854,6 +879,7 @@ int main(void)
     test_parse_time_restriction_window();
     test_parse_news_schedule_file();
     test_parse_iso8601_timestamp_ms();
+    test_schedule_sample_index();
     test_time_restricted_skip_window();
     test_should_skip_mode_at_time();
     test_fades();

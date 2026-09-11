@@ -480,6 +480,7 @@ static void test_default_config(void)
     EXPECT_EQ_INT(OUTPUT_AUDIO, config.right_debug_output_mode);
     EXPECT_EQ_INT(0, config.time_restricted_silence_enabled);
     EXPECT_EQ_INT(0, config.stream_time_enabled);
+    EXPECT_EQ_INT(0, config.cpu_clock_schedule_enabled);
     EXPECT_EQ_INT(0, config.time_restriction_window.schedule_enabled);
     EXPECT_EQ_INT(2, config.time_restriction_window.range_count);
     EXPECT_EQ_INT(58, config.time_restriction_window.ranges[0].start_minute);
@@ -581,6 +582,7 @@ static void test_command_line_parsing(void)
         "-c1",
         "-l3",
         "-r4",
+        "-e",
         "-T",
         "2026-06-20T18:38:11.200Z",
         "-w0-5,20-30,30-40",
@@ -598,6 +600,7 @@ static void test_command_line_parsing(void)
     EXPECT_EQ_INT(OUTPUT_LEVEL, config.left_debug_output_mode);
     EXPECT_EQ_INT(OUTPUT_TENSOR, config.right_debug_output_mode);
     EXPECT_EQ_INT(1, config.stream_time_enabled);
+    EXPECT_EQ_INT(1, config.cpu_clock_schedule_enabled);
     EXPECT_EQ_INT(60, config.stream_time_utc_offset_minutes);
     EXPECT_EQ_INT(3, config.time_restriction_window.range_count);
     EXPECT_EQ_INT(0, config.time_restriction_window.ranges[0].start_minute);
@@ -656,6 +659,7 @@ static void test_command_line_parsing_rejects_invalid_inputs(void)
     char *bad_time[] = { "silencer", "-T", "2024-02-30T00:00:00Z" };
     char *bad_zone[] = { "silencer", "-z+24:00" };
     char *bad_window[] = { "silencer", "-w0-60" };
+    char *clock_without_time[] = { "silencer", "-e" };
     char *extra[] = { "silencer", "extra" };
 
     initialize_program_config(&config);
@@ -686,6 +690,8 @@ static void test_command_line_parsing_rejects_invalid_inputs(void)
     EXPECT_FALSE(parse_args_suppressed(2, bad_zone, &config));
     initialize_program_config(&config);
     EXPECT_FALSE(parse_args_suppressed(2, bad_window, &config));
+    initialize_program_config(&config);
+    EXPECT_FALSE(parse_args_suppressed(2, clock_without_time, &config));
     initialize_program_config(&config);
     EXPECT_FALSE(parse_args_suppressed(2, extra, &config));
 }

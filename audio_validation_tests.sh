@@ -417,6 +417,10 @@ run_hls_mux_check() {
 run_container_packaging_checks() {
     assert_log_contains "$SCRIPT_DIR/Dockerfile" 'COPY[[:space:]]+news_schedule\.ini[[:space:]]+\./' 'news schedule image copy'
     assert_log_contains "$SCRIPT_DIR/radio6music_noNews_hls.sh" 'aac_coder[[:space:]]+"\$HLS_AAC_CODER"' 'fast HLS AAC encoder'
+    assert_log_contains "$SCRIPT_DIR/radio6music_noNews_hls.sh" '"\$SILENCER"[[:space:]]+-e' 'CPU-clock silencer schedule'
+    assert_log_contains "$SCRIPT_DIR/radio6music_noNews_hls.sh" 'live_start_index[[:space:]]+0' 'HLS timestamp-aligned start segment'
+    assert_log_contains "$SCRIPT_DIR/play_6music_silencer.sh" '"\$SILENCER"[[:space:]]+-e' 'live player CPU-clock silencer schedule'
+    assert_log_contains "$SCRIPT_DIR/play_6music_silencer.sh" 'live_start_index[[:space:]]+0' 'live player timestamp-aligned start segment'
 }
 
 main() {

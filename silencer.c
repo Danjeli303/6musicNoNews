@@ -58,6 +58,7 @@ static const char *usage =
 " Options:  -a <file.bin>    = output analysis results to specified file\n"
 "           -c<n>            = override default channel count of 2\n"
 "           -d <file.tensor> = specify alternate discrimination tensor file\n"
+"           -e               = schedule from monotonic CPU clock (live streams)\n"
 "           -k               = keep-alive crossfading for long silences\n"
 "           -l<n>            = left output override (for debug, n = 0-4:\n"
 "                            = 0=audio, 1=mono, 2=filtered, 3=level, 4=tensor)\n"
@@ -122,6 +123,8 @@ typedef struct {
     int64_t stream_start_epoch_ms;
     int stream_time_utc_offset_minutes;
     int stream_time_utc_offset_is_set;
+    int cpu_clock_schedule_enabled;
+    int64_t schedule_clock_start_ms;
     TimeRestrictionWindow time_restriction_window;
 } ProgramConfig;
 
@@ -204,6 +207,7 @@ static void initialize_audio_filters(const ProgramConfig *config, AudioBuffers *
 static void prime_rms_ring_buffer(AudioBuffers *buffers, ProgramState *state);
 static void process_audio_stream(ProgramConfig *config, AudioBuffers *buffers, ProgramState *state);
 static void print_periodic_debug_time(const ProgramConfig *config, ProgramState *state);
+static int64_t scheduled_sample_index(const ProgramConfig *config, const ProgramState *state, int64_t target_sample_index);
 static int can_fast_passthrough_chunk(const ProgramConfig *config, const ProgramState *state, int num_input_samples_in_chunk);
 static void write_delayed_passthrough_audio(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, const int16_t *pcm_input_chunk, int num_input_samples_in_chunk);
 static void process_input_chunk(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, int16_t* pcm_input_chunk, int num_input_samples_in_chunk);
@@ -323,6 +327,8 @@ int main (int argc, char **argv) {
     state.dither_rng_state = 0x31415926; 
     state.current_audio_mode = AUDIO_MODE_NOTHING; 
 
+    if (config.cpu_clock_schedule_enabled)
+        config.schedule_clock_start_ms = monotonic_clock_ms();
 
     process_audio_stream(&config, &buffers, &state);
 
@@ -358,6 +364,8 @@ static void initialize_program_config(ProgramConfig *config) {
     config->stream_start_epoch_ms = 0;
     config->stream_time_utc_offset_minutes = 0;
     config->stream_time_utc_offset_is_set = 0;
+    config->cpu_clock_schedule_enabled = 0;
+    config->schedule_clock_start_ms = -1;
     init_default_time_restriction_window(&config->time_restriction_window);
 }
 
@@ -414,6 +422,7 @@ static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *co
                         else option_char_ptr--; 
                         break;
                     case 'd': tensor_input_file_follows = 1; break; 
+                    case 'e': config->cpu_clock_schedule_enabled = 1; break;
                     case 'k': config->keep_alive_enabled = 1; break; 
                     case 'l': 
                         config->left_debug_output_mode = strtol(next_char_in_option, &option_char_ptr, 10);
@@ -503,6 +512,7 @@ static int parse_command_line_arguments(int argc, char **argv, ProgramConfig *co
     if (stream_start_time_follows) { fprintf(stderr, "\nError: -T requires an ISO-8601 stream start time\n"); return 0; }
     if (stream_time_utc_offset_follows) { fprintf(stderr, "\nError: -z requires a UTC offset like +01:00\n"); return 0; }
     if (time_restriction_window_follows) { fprintf(stderr, "\nError: -w requires minute ranges or an INI schedule file\n"); return 0; }
+    if (config->cpu_clock_schedule_enabled && !config->stream_time_enabled) { fprintf(stderr, "\nError: -e requires a stream start time supplied with -T\n"); return 0; }
     return 1; // Success
 }
 
@@ -624,7 +634,18 @@ static void process_audio_stream(ProgramConfig *config, AudioBuffers *buffers, P
     }
 }
 
+static int64_t scheduled_sample_index(const ProgramConfig *config, const ProgramState *state, int64_t target_sample_index) {
+    return schedule_sample_index(config->cpu_clock_schedule_enabled,
+                                 config->schedule_clock_start_ms,
+                                 monotonic_clock_ms(),
+                                 state->total_samples_processed,
+                                 target_sample_index,
+                                 config->sample_rate);
+}
+
 static int can_fast_passthrough_chunk(const ProgramConfig *config, const ProgramState *state, int num_input_samples_in_chunk) {
+    int64_t clock_now_ms, first_sample_index, last_sample_index;
+
     if (!(config->time_restricted_silence_enabled && config->stream_time_enabled &&
           config->processing_mode == PROCESSING_MODE_SILENCE_TALK &&
           config->left_debug_output_mode == OUTPUT_AUDIO && config->right_debug_output_mode == OUTPUT_AUDIO &&
@@ -635,17 +656,25 @@ static int can_fast_passthrough_chunk(const ProgramConfig *config, const Program
     if (num_input_samples_in_chunk <= 0)
         return 0;
 
+    clock_now_ms = config->cpu_clock_schedule_enabled ? monotonic_clock_ms() : -1;
+    first_sample_index = schedule_sample_index(config->cpu_clock_schedule_enabled,
+                                               config->schedule_clock_start_ms, clock_now_ms,
+                                               state->total_samples_processed,
+                                               state->total_samples_processed,
+                                               config->sample_rate);
+    last_sample_index = first_sample_index + num_input_samples_in_chunk - 1;
+
     return !is_time_restricted_window_near_with_config(config->stream_time_enabled,
                                                        config->stream_start_epoch_ms,
                                                        config->stream_time_utc_offset_minutes,
-                                                       state->total_samples_processed,
+                                                       first_sample_index,
                                                        config->sample_rate,
                                                        &config->time_restriction_window,
                                                        TIME_RESTRICTION_ANALYSIS_MARGIN_SECS) &&
            !is_time_restricted_window_near_with_config(config->stream_time_enabled,
                                                        config->stream_start_epoch_ms,
                                                        config->stream_time_utc_offset_minutes,
-                                                       state->total_samples_processed + num_input_samples_in_chunk - 1,
+                                                       last_sample_index,
                                                        config->sample_rate,
                                                        &config->time_restriction_window,
                                                        TIME_RESTRICTION_ANALYSIS_MARGIN_SECS);
@@ -708,9 +737,8 @@ static void print_periodic_debug_time(const ProgramConfig *config, ProgramState 
             return;
         }
 
-        // Raw PCM does not preserve HLS wall-clock metadata, so advance the
-        // supplied stream start time by the number of decoded samples consumed.
-        int64_t stream_epoch_ms = config->stream_start_epoch_ms + state->total_samples_processed * 1000LL / config->sample_rate;
+        int64_t time_sample_index = scheduled_sample_index(config, state, state->total_samples_processed);
+        int64_t stream_epoch_ms = config->stream_start_epoch_ms + time_sample_index * 1000LL / config->sample_rate;
         char formatted_time[40];
         if (!format_epoch_ms_with_utc_offset(stream_epoch_ms, config->stream_time_utc_offset_minutes, formatted_time, sizeof(formatted_time))) {
             return;
@@ -965,11 +993,12 @@ static void perform_detection_and_handle_transitions(const ProgramConfig *config
             if (config->processing_mode == PROCESSING_MODE_SILENCE_MUSIC || config->processing_mode == PROCESSING_MODE_SILENCE_TALK) {
                 int64_t first_buffered_sample = state->total_samples_processed - state->main_output_buffer_idx;
                 int transition_offset_in_buffer = (int)(state->current_transition_sample_point - first_buffered_sample);
+                int64_t schedule_transition_sample = scheduled_sample_index(config, state, state->current_transition_sample_point);
 
                 int current_mode_is_silenced =
-                    should_silence_audio_mode_at_sample(config, state->current_audio_mode, state->current_transition_sample_point);
+                    should_silence_audio_mode_at_sample(config, state->current_audio_mode, schedule_transition_sample);
                 int target_mode_is_silenced =
-                    should_silence_audio_mode_at_sample(config, detected_audio_mode_this_step, state->current_transition_sample_point);
+                    should_silence_audio_mode_at_sample(config, detected_audio_mode_this_step, schedule_transition_sample);
 
                 if (current_mode_is_silenced == target_mode_is_silenced) {
                     // The classification changed, but the time gate leaves the output action unchanged.
@@ -1063,7 +1092,7 @@ static int should_bypass_talk_silencing_due_to_time_restriction(const ProgramCon
     return !is_time_restricted_window_active_with_config(config->stream_time_enabled,
                                                          config->stream_start_epoch_ms,
                                                          config->stream_time_utc_offset_minutes,
-                                                         state->total_samples_processed,
+                                                         scheduled_sample_index(config, state, state->total_samples_processed),
                                                          config->sample_rate,
                                                          &config->time_restriction_window);
 }

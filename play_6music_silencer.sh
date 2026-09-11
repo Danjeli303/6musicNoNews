@@ -61,6 +61,7 @@ run_check() {
       -reconnect 1 \
       -reconnect_streamed 1 \
       -reconnect_delay_max 2 \
+      -live_start_index 0 \
       -i "$URL" \
       -t 1 \
       -f s16le -ar "$SAMPLE_RATE" -ac 2 "$tmp_pcm"
@@ -128,13 +129,15 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
     exit 0
 fi
 
+# Decode the same first segment represented by START_TIME.
 ffmpeg \
   -hide_banner \
   -loglevel warning \
   -reconnect 1 \
   -reconnect_streamed 1 \
   -reconnect_delay_max 2 \
+  -live_start_index 0 \
   -i "$URL" \
   -f s16le -ar "$SAMPLE_RATE" -ac 2 pipe:1 | \
-"$SILENCER" -t -x -v20 -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" -w "$SILENCER_WINDOW" | \
+"$SILENCER" -e -t -x -v20 -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" -w "$SILENCER_WINDOW" | \
 ffplay -hide_banner -loglevel warning -nodisp -f s16le -ar "$SAMPLE_RATE" -ch_layout stereo -

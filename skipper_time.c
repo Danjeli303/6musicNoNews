@@ -12,6 +12,10 @@
 #include <string.h>
 #include <time.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "skipper_time.h"
 
 #define MINUTES_PER_DAY 1440
@@ -27,6 +31,33 @@ static int ascii_equals_ignore_case (const char *left, const char *right);
 static char *trim_spaces (char *text);
 static void strip_inline_comment (char *text);
 static int is_news_schedule_near (const TimeRestrictionWindow *window, const struct tm *time_info, int margin_seconds);
+
+int64_t monotonic_clock_ms (void)
+{
+#ifdef _WIN32
+    return (int64_t) GetTickCount64 ();
+#else
+    struct timespec now;
+
+    if (clock_gettime (CLOCK_MONOTONIC, &now) != 0)
+        return -1;
+
+    return (int64_t) now.tv_sec * 1000 + now.tv_nsec / 1000000;
+#endif
+}
+
+int64_t schedule_sample_index (int cpu_clock_enabled, int64_t clock_start_ms,
+                               int64_t clock_now_ms, int64_t current_sample_index,
+                               int64_t target_sample_index, int sample_rate)
+{
+    int64_t elapsed_ms;
+
+    if (!cpu_clock_enabled || clock_start_ms < 0 || clock_now_ms < clock_start_ms || sample_rate <= 0)
+        return target_sample_index;
+
+    elapsed_ms = clock_now_ms - clock_start_ms;
+    return elapsed_ms * sample_rate / 1000 + target_sample_index - current_sample_index;
+}
 
 void init_default_time_restriction_window (TimeRestrictionWindow *window)
 {
