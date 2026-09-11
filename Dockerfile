@@ -12,9 +12,9 @@ WORKDIR /app
 COPY Makefile ./
 COPY *.c *.h ./
 
-RUN make silencer
+RUN make silencer skipper
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim AS audio-runtime
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -27,9 +27,48 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY radio6music_noNews_hls.sh ./
+COPY skip_6music_news.sh ./
 COPY news_schedule.ini ./
 COPY --from=build /app/silencer ./silencer
+COPY --from=build /app/skipper ./skipper
+
+FROM audio-runtime AS hls-streamer
 
 RUN chmod +x ./radio6music_noNews_hls.sh
 
 CMD ["./radio6music_noNews_hls.sh"]
+
+FROM audio-runtime AS news-skipper-web
+
+ARG GET_IPLAYER_VERSION=v3.36
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        atomicparsley \
+        libcgi-pm-perl \
+        liblwp-protocol-https-perl \
+        libmojolicious-perl \
+        libwww-perl \
+        libxml-libxml-perl \
+        make \
+        perl \
+        python3 \
+    && curl -fsSL \
+        "https://raw.githubusercontent.com/get-iplayer/get_iplayer/${GET_IPLAYER_VERSION}/get_iplayer" \
+        -o /usr/local/bin/get_iplayer \
+    && chmod 0755 /usr/local/bin/get_iplayer \
+    && get_iplayer -V \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY get_iplayer_skip_news.sh skip_news_web.py ./
+COPY web ./web
+
+RUN chmod +x ./get_iplayer_skip_news.sh ./skip_6music_news.sh ./skip_news_web.py \
+    && mkdir -p /srv/downloads
+
+EXPOSE 8080
+
+CMD ["python3", "./skip_news_web.py", "--host", "0.0.0.0", "--port", "8080", "--output-dir", "/srv/downloads"]
+
+# Preserve the original HLS image as the default for direct `docker build` use.
+FROM hls-streamer AS default

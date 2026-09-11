@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>6 Music News Skipper</title>
+    <meta
+      name="description"
+      content="Download a BBC Sounds programme and remove scheduled 6 Music news."
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="brand">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span>SKIPPER / RADIO 6</span>
+      </header>
+
+      <section class="hero" aria-labelledby="page-title">
+        <p class="eyebrow">BBC Sounds utility</p>
+        <h1 id="page-title">Keep the programme.<br /><em>Skip the news.</em></h1>
+        <p class="intro">
+          Paste a BBC Sounds programme link. Skipper downloads it, removes scheduled
+          Radio 6 news, and gives you the finished audio file.
+        </p>
+
+        <form id="programme-form" novalidate>
+          <label for="sounds-url">BBC Sounds programme link</label>
+          <div class="input-row">
+            <input
+              id="sounds-url"
+              name="url"
+              type="url"
+              inputmode="url"
+              autocomplete="url"
+              placeholder="https://www.bbc.co.uk/sounds/play/m0030yw7"
+              required
+            />
+            <button type="submit" id="submit-button">
+              <span>Skip the news</span>
+              <span aria-hidden="true">→</span>
+            </button>
+          </div>
+          <p class="hint">Use an individual <strong>/sounds/play/</strong> link.</p>
+        </form>
+      </section>
+
+      <section id="job-card" class="job-card" aria-live="polite" hidden>
+        <div class="job-heading">
+          <div>
+            <p id="job-kicker" class="eyebrow">In progress</p>
+            <h2 id="job-stage">Preparing</h2>
+          </div>
+          <span id="progress-number" class="progress-number">0%</span>
+        </div>
+
+        <div
+          id="progress-track"
+          class="progress-track"
+          role="progressbar"
+          aria-label="Programme progress"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="0"
+        >
+          <span id="progress-bar"></span>
+        </div>
+        <p id="job-message" class="job-message">Starting…</p>
+
+        <details id="activity-panel">
+          <summary>Processing details</summary>
+          <pre id="job-logs"></pre>
+        </details>
+
+        <a id="download-button" class="download-button" href="#" download hidden>
+          <span>Download news-skipped file</span>
+          <span aria-hidden="true">↓</span>
+        </a>
+      </section>
+
+      <footer>
+        <span>Runs inside your Docker setup</span>
+        <span class="status-dot"><i></i> Local processing</span>
+      </footer>
+    </main>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

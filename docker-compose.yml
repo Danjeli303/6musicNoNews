@@ -2,6 +2,7 @@ services:
   hls-streamer:
     build:
       context: .
+      target: hls-streamer
     command: ["./radio6music_noNews_hls.sh"]
     restart: unless-stopped
     environment:
@@ -21,6 +22,19 @@ services:
     volumes:
       - hls_data:/srv/hls
 
+  news-skipper-web:
+    build:
+      context: .
+      target: news-skipper-web
+    restart: unless-stopped
+    ports:
+      - "${SKIP_NEWS_WEB_BIND:-127.0.0.1}:${SKIP_NEWS_WEB_PORT:-8080}:8080"
+    environment:
+      TZ: ${TZ:-Europe/London}
+      SKIP_NEWS_OUTPUT_DIR: /srv/downloads
+    volumes:
+      - skipper_downloads:/srv/downloads
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -28,7 +42,7 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      PUBLIC_HOST: ${PUBLIC_HOST:?Set PUBLIC_HOST in .env}
+      PUBLIC_HOST: ${PUBLIC_HOST:-localhost}
     volumes:
       - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - hls_data:/srv/hls:ro
@@ -37,5 +51,6 @@ services:
 
 volumes:
   hls_data:
+  skipper_downloads:
   caddy_data:
   caddy_config:

@@ -20,6 +20,7 @@ Requirements for local development:
 
 - C compiler with `make`
 - `ffmpeg` and `ffprobe`
+- `get_iplayer` for BBC Sounds programme downloads
 - `curl` for live HLS scripts
 - `ffplay` only for local live playback
 
@@ -78,6 +79,42 @@ silenced:
 ./silence_6music_news.sh input.m4a output_silenced_talk.m4a
 ```
 
+### Download from BBC Sounds
+
+`get_iplayer_skip_news.sh` accepts an individual BBC Sounds programme link,
+downloads the radio programme to an isolated temporary directory, runs
+`skip_6music_news.sh`, and saves only the news-skipped result:
+
+```sh
+./get_iplayer_skip_news.sh https://www.bbc.co.uk/sounds/play/m0030yw7
+./get_iplayer_skip_news.sh https://www.bbc.co.uk/sounds/play/m0030yw7 /path/to/output
+```
+
+The default output directory is `downloads/`. Install `get_iplayer` by following
+its [official installation guide](https://github.com/get-iplayer/get_iplayer/wiki/installation)
+when running the script directly on the host. The Docker setup below already
+contains it.
+
+### Web interface with live progress
+
+Build and start the self-contained web service with Docker Compose:
+
+```sh
+docker compose up --build news-skipper-web
+```
+
+Open <http://127.0.0.1:8080>, paste a BBC Sounds `/sounds/play/` link, and start
+the job. The page reports download and news-removal progress, then displays a
+download button for the completed audio file. Results persist in the
+`skipper_downloads` Docker volume. Set `SKIP_NEWS_WEB_PORT` or
+`SKIP_NEWS_WEB_BIND` in `.env` to change the host port or bind address.
+
+For host-only use without Docker:
+
+```sh
+python3 skip_news_web.py
+```
+
 Both wrappers support `--profile`, which times decode, filter, and encode
 stages separately:
 
@@ -126,6 +163,8 @@ make sample-recording-test
 ```
 
 - `make test` runs C unit tests.
+- `make web-test` runs the BBC Sounds wrapper and web-service unit tests without
+  downloading a real programme.
 - `make audio-test` creates temporary synthetic audio, checks wrappers, verifies
   scheduled silence/pass-through, checks format preservation, and validates HLS
   packaging. It does not use live streams.
@@ -144,6 +183,9 @@ make sample-recording-test
 - `skipper_tensor.c` / `skipper_tensor.h`: embedded tensor loading helpers.
 - `4d-tensor.h`: embedded classifier tensor.
 - `audio_validation_tests.sh`: end-to-end wrapper/audio validation.
+- `get_iplayer_skip_news.sh`: temporary BBC Sounds download and recorded-file
+  news-removal wrapper.
+- `skip_news_web.py` and `web/`: local web service with progress and downloads.
 - `skipper_tests.c` and `silencer_tests.c`: C unit tests.
 - `Dockerfile`, `docker-compose.yml`, and `docker/caddy/Caddyfile`: AWS HLS
   deployment packaging.

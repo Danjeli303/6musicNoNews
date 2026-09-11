@@ -7,7 +7,7 @@ OPTFLAGS ?= -Ofast -flto
 utils := skipper tensor-gen bin2c silencer
 tests := skipper_tests silencer_tests
 
-.PHONY: all test audio-test sample-recording-test clean
+.PHONY: all test audio-test web-test sample-recording-test clean
 
 all: $(utils)
 
@@ -35,6 +35,10 @@ silencer_tests: silencer_tests.c silencer.c biquad.c lzwlib.c $(skipper_common) 
 test: $(tests)
 	./skipper_tests
 	./silencer_tests
+	python3 -m unittest tests/test_skip_news_web.py
+
+web-test:
+	python3 -m unittest tests/test_skip_news_web.py
 
 audio-test: skipper silencer
 	./audio_validation_tests.sh
