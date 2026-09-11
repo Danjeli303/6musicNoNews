@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-DEFAULT_INPUT="/Users/danielschembri/Desktop/iPlayer Recordings/Gilles_Peterson_-_Zakia_Sewell_sits_in_Cameron_Winter_m002b79h_original.m4a"
+DEFAULT_INPUT="${SKIPPER_INPUT:-}"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SKIPPER="$SCRIPT_DIR/skipper"
 SAMPLE_RATE=48000
@@ -10,8 +10,8 @@ AAC_CODER="${AAC_CODER:-fast}"
 SKIPPER_WINDOW="${NEWS_SCHEDULE:-$SCRIPT_DIR/news_schedule.ini}"
 
 usage() {
-    printf 'Usage: %s [--check] [--profile] [-w ranges-or-file] [input.ext] [output.ext]\n' "$0"
-    printf 'Defaults to the Gilles Peterson iPlayer recording.\n'
+    printf 'Usage: %s [--check] [--profile] [-w ranges-or-file] input.ext [output.ext]\n' "$0"
+    printf 'Set SKIPPER_INPUT to make the input argument optional.\n'
     printf 'With one input file, writes input-name_newsskip.ext beside the input.\n'
     printf 'Default skipper schedule/window: %s\n' "$SKIPPER_WINDOW"
 }
@@ -21,6 +21,18 @@ require_command() {
         printf 'Error: required command not found: %s\n' "$1" >&2
         exit 1
     fi
+}
+
+run_pipeline_stage() {
+    status_file=$1
+    log_file=$2
+    shift 2
+
+    set +e
+    "$@" 2>"$log_file"
+    stage_status=$?
+    printf '%s\n' "$stage_status" >"$status_file"
+    return "$stage_status"
 }
 
 ensure_skipper() {
@@ -432,6 +444,13 @@ while [ "$#" -gt 0 ]; do
 done
 
 INPUT=${INPUT_ARG:-$DEFAULT_INPUT}
+
+if [ -z "$INPUT" ]; then
+    printf 'Error: no input file specified. Pass an input file or set SKIPPER_INPUT.\n' >&2
+    usage >&2
+    exit 1
+fi
+
 OUTPUT=${OUTPUT_ARG:-$(default_output_for_input "$INPUT")}
 LOG="${OUTPUT%.*}.log"
 
@@ -443,6 +462,11 @@ fi
 require_command ffmpeg
 require_command ffprobe
 require_command make
+
+if [ "$PROFILE_ONLY" -eq 1 ]; then
+    require_command /usr/bin/time
+fi
+
 ensure_skipper
 
 START_TIME=$(get_recorded_start_time)
@@ -472,33 +496,63 @@ fi
 start_progress_monitor
 trap cleanup_progress_monitor EXIT HUP INT TERM
 
-ffmpeg \
-  -hide_banner \
-  -loglevel warning \
-  -nostats \
-  -progress "$PROGRESS_FIFO" \
-  -i "$INPUT" \
-  -vn \
-  -f s16le -ar "$INPUT_SAMPLE_RATE" -ac "$INPUT_CHANNELS" pipe:1 2>"$LOG" | \
-"$SKIPPER" -t -x -w "$SKIPPER_WINDOW" -s"$INPUT_SAMPLE_RATE" -c"$INPUT_CHANNELS" -T "$START_TIME" -z "$UTC_OFFSET" 2>>"$LOG" | \
-ffmpeg \
-  -hide_banner \
-  -loglevel warning \
-  -y \
-  -f s16le -ar "$INPUT_SAMPLE_RATE" -ac "$INPUT_CHANNELS" -i pipe:0 \
-  -i "$INPUT" \
-  -map 0:a:0 \
-  $ARTWORK_MAP \
-  -map_metadata 1 \
-  -map_metadata:s:a:0 1:s:a:0 \
-  -map_chapters 1 \
-  $AUDIO_CODEC_ARGS \
-  $VIDEO_CODEC_ARGS \
-  $MUXER_ARGS \
-  $FORMAT_ARGS \
-  "$OUTPUT" 2>>"$LOG"
+DECODE_LOG="$PROGRESS_DIR/decode.log"
+SKIPPER_LOG="$PROGRESS_DIR/skipper.log"
+ENCODE_LOG="$PROGRESS_DIR/encode.log"
+DECODE_STATUS_FILE="$PROGRESS_DIR/decode.status"
+SKIPPER_STATUS_FILE="$PROGRESS_DIR/skipper.status"
+: >"$LOG"
+
+# POSIX sh reports only the final command's pipeline status, so record the
+# decoder and skipper statuses separately.
+if run_pipeline_stage "$DECODE_STATUS_FILE" "$DECODE_LOG" \
+    ffmpeg \
+      -hide_banner \
+      -loglevel warning \
+      -nostats \
+      -progress "$PROGRESS_FIFO" \
+      -i "$INPUT" \
+      -vn \
+      -f s16le -ar "$INPUT_SAMPLE_RATE" -ac "$INPUT_CHANNELS" pipe:1 | \
+  run_pipeline_stage "$SKIPPER_STATUS_FILE" "$SKIPPER_LOG" \
+    "$SKIPPER" -t -x -w "$SKIPPER_WINDOW" -s"$INPUT_SAMPLE_RATE" -c"$INPUT_CHANNELS" -T "$START_TIME" -z "$UTC_OFFSET" | \
+  ffmpeg \
+      -hide_banner \
+      -loglevel warning \
+      -y \
+      -f s16le -ar "$INPUT_SAMPLE_RATE" -ac "$INPUT_CHANNELS" -i pipe:0 \
+      -i "$INPUT" \
+      -map 0:a:0 \
+      $ARTWORK_MAP \
+      -map_metadata 1 \
+      -map_metadata:s:a:0 1:s:a:0 \
+      -map_chapters 1 \
+      $AUDIO_CODEC_ARGS \
+      $VIDEO_CODEC_ARGS \
+      $MUXER_ARGS \
+      $FORMAT_ARGS \
+      "$OUTPUT" 2>"$ENCODE_LOG"
+then
+    ENCODE_STATUS=0
+else
+    ENCODE_STATUS=$?
+fi
+
+DECODE_STATUS=$(cat "$DECODE_STATUS_FILE")
+SKIPPER_STATUS=$(cat "$SKIPPER_STATUS_FILE")
 
 finish_progress_monitor
+
+cat "$DECODE_LOG" "$SKIPPER_LOG" "$ENCODE_LOG" >>"$LOG"
+
+if [ "$DECODE_STATUS" -ne 0 ] || [ "$SKIPPER_STATUS" -ne 0 ] || [ "$ENCODE_STATUS" -ne 0 ]; then
+    printf 'Error: conversion failed (decode=%s, skipper=%s, encode=%s).\n' \
+      "$DECODE_STATUS" "$SKIPPER_STATUS" "$ENCODE_STATUS" >&2
+    printf 'See log: %s\n' "$LOG" >&2
+    tail -n 20 "$LOG" >&2
+    exit 1
+fi
+
 cleanup_progress_monitor
 trap - EXIT HUP INT TERM
 
