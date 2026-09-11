@@ -264,6 +264,14 @@ finish_progress_monitor() {
 }
 
 cleanup_progress_monitor() {
+    for pid in ${DECODE_PID:-} ${SKIPPER_PID:-} ${ENCODE_PID:-}; do
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    done
+    DECODE_PID=
+    SKIPPER_PID=
+    ENCODE_PID=
+
     if [ "${PROGRESS_PID:-}" ]; then
         kill "$PROGRESS_PID" 2>/dev/null || true
         wait "$PROGRESS_PID" 2>/dev/null || true
@@ -484,20 +492,22 @@ fi
 start_progress_monitor
 trap cleanup_progress_monitor EXIT HUP INT TERM
 
-ffmpeg \
-  -hide_banner \
-  -loglevel warning \
-  -nostats \
-  -progress "$PROGRESS_FIFO" \
-  -i "$INPUT" \
-  -vn \
-  -f s16le -ar "$INPUT_SAMPLE_RATE" -ac "$INPUT_CHANNELS" pipe:1 2>"$LOG" | \
-"$SKIPPER" -t -x -w "$SKIPPER_WINDOW" -s"$INPUT_SAMPLE_RATE" -c"$INPUT_CHANNELS" -T "$START_TIME" -z "$UTC_OFFSET" 2>>"$LOG" | \
+DECODE_FIFO="$PROGRESS_DIR/decode.pcm"
+SKIPPED_FIFO="$PROGRESS_DIR/skipped.pcm"
+DECODE_LOG="$PROGRESS_DIR/decode.log"
+SKIPPER_LOG="$PROGRESS_DIR/skipper.log"
+ENCODE_LOG="$PROGRESS_DIR/encode.log"
+mkfifo "$DECODE_FIFO" "$SKIPPED_FIFO"
+: >"$LOG"
+
+# Run the stages separately instead of as a shell pipeline. POSIX sh only
+# exposes the exit status of the last pipeline command, which previously let a
+# failed decoder or skipper produce a corrupt output followed by "Done".
 ffmpeg \
   -hide_banner \
   -loglevel warning \
   -y \
-  -f s16le -ar "$INPUT_SAMPLE_RATE" -ac "$INPUT_CHANNELS" -i pipe:0 \
+  -f s16le -ar "$INPUT_SAMPLE_RATE" -ac "$INPUT_CHANNELS" -i "$SKIPPED_FIFO" \
   -i "$INPUT" \
   -map 0:a:0 \
   $ARTWORK_MAP \
@@ -508,9 +518,43 @@ ffmpeg \
   $VIDEO_CODEC_ARGS \
   $MUXER_ARGS \
   $FORMAT_ARGS \
-  "$OUTPUT" 2>>"$LOG"
+  "$OUTPUT" 2>"$ENCODE_LOG" &
+ENCODE_PID=$!
+
+ffmpeg \
+  -hide_banner \
+  -loglevel warning \
+  -nostats \
+  -y \
+  -progress "$PROGRESS_FIFO" \
+  -i "$INPUT" \
+  -vn \
+  -f s16le -ar "$INPUT_SAMPLE_RATE" -ac "$INPUT_CHANNELS" "$DECODE_FIFO" 2>"$DECODE_LOG" &
+DECODE_PID=$!
+
+"$SKIPPER" -t -x -w "$SKIPPER_WINDOW" -s"$INPUT_SAMPLE_RATE" -c"$INPUT_CHANNELS" -T "$START_TIME" -z "$UTC_OFFSET" \
+  <"$DECODE_FIFO" >"$SKIPPED_FIFO" 2>"$SKIPPER_LOG" &
+SKIPPER_PID=$!
+
+if wait "$DECODE_PID"; then DECODE_STATUS=0; else DECODE_STATUS=$?; fi
+if wait "$SKIPPER_PID"; then SKIPPER_STATUS=0; else SKIPPER_STATUS=$?; fi
+if wait "$ENCODE_PID"; then ENCODE_STATUS=0; else ENCODE_STATUS=$?; fi
+DECODE_PID=
+SKIPPER_PID=
+ENCODE_PID=
 
 finish_progress_monitor
+
+cat "$DECODE_LOG" "$SKIPPER_LOG" "$ENCODE_LOG" >>"$LOG"
+
+if [ "$DECODE_STATUS" -ne 0 ] || [ "$SKIPPER_STATUS" -ne 0 ] || [ "$ENCODE_STATUS" -ne 0 ]; then
+    printf 'Error: conversion failed (decode=%s, skipper=%s, encode=%s).\n' \
+      "$DECODE_STATUS" "$SKIPPER_STATUS" "$ENCODE_STATUS" >&2
+    printf 'See log: %s\n' "$LOG" >&2
+    tail -n 20 "$LOG" >&2
+    exit 1
+fi
+
 cleanup_progress_monitor
 trap - EXIT HUP INT TERM
 
