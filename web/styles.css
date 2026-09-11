@@ -350,6 +350,178 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 .download-button:hover { color: #fff; background: var(--sounds); }
 [hidden] { display: none !important; }
 
+.activity-section {
+  margin-top: 20px;
+  padding: clamp(24px, 4vw, 40px);
+  background: #181818;
+  border-top: 6px solid var(--sounds);
+}
+
+.activity-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 28px;
+  padding-bottom: 28px;
+  border-bottom: 1px solid var(--line);
+}
+
+.activity-heading h2 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.2rem);
+  letter-spacing: -0.04em;
+}
+
+.activity-heading > div > p:last-child {
+  max-width: 660px;
+  margin: 12px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.quiet-button,
+.remove-button,
+.library-download {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 18px;
+  border: 1px solid #666;
+  color: #fff;
+  background: transparent;
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.quiet-button:hover,
+.remove-button:hover { background: #333; }
+
+.activity-group { margin-top: 34px; }
+
+.group-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.group-heading h3 {
+  margin: 0;
+  font-size: 1.25rem;
+  letter-spacing: -0.02em;
+}
+
+.count-badge {
+  min-width: 28px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 8px;
+  color: #111;
+  background: var(--sounds-light);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.process-list { display: grid; gap: 10px; }
+
+.process-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 15px 24px;
+  padding: 20px;
+  border-left: 4px solid var(--sounds);
+  background: var(--panel-soft);
+}
+
+.process-item[data-status="failed"] { border-left-color: var(--error); }
+.process-item[data-status="queued"] { border-left-color: #8b8b8b; }
+
+.process-summary {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.process-copy { min-width: 0; }
+.process-copy h4 { margin: 0; font-size: 1rem; }
+.process-meta { margin: 6px 0 0; color: #aaa; font-size: 0.76rem; }
+
+.job-status {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  color: #111;
+  background: var(--sounds-light);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.process-item[data-status="failed"] .job-status { background: var(--error); }
+.process-item[data-status="queued"] .job-status { color: #fff; background: #656565; }
+
+.compact-progress-line {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  color: #ccc;
+  font-size: 0.8rem;
+}
+
+.compact-progress-line b { color: var(--sounds-light); }
+
+.compact-progress {
+  grid-column: 1 / -1;
+  height: 6px;
+  overflow: hidden;
+  background: #515151;
+}
+
+.compact-progress span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--sounds);
+  transition: width 350ms ease;
+}
+
+.process-filename {
+  min-width: 0;
+  margin: 0;
+  align-self: center;
+  overflow-wrap: anywhere;
+  color: #bbb;
+  font: 0.76rem/1.4 ui-monospace, monospace;
+}
+
+.process-actions { display: flex; gap: 8px; }
+
+.library-download {
+  border-color: var(--sounds-light);
+  color: #111;
+  background: var(--sounds-light);
+}
+
+.library-download:hover { color: #fff; background: var(--sounds); }
+.remove-button { cursor: pointer; }
+.remove-button:hover { border-color: var(--error); color: var(--error); }
+
+.empty-state {
+  margin: 0;
+  padding: 22px;
+  border: 1px dashed #4b4b4b;
+  color: #999;
+  font-size: 0.86rem;
+}
+
+.library-message { min-height: 1.3em; margin: 18px 0 0; color: #bbb; font-size: 0.82rem; }
+
 footer {
   display: flex;
   justify-content: space-between;
@@ -386,6 +558,10 @@ footer {
   button { min-height: 58px; }
   .steps { flex-direction: column; gap: 10px; }
   .job-heading { align-items: flex-start; }
+  .activity-heading { align-items: flex-start; flex-direction: column; }
+  .process-item { grid-template-columns: 1fr; }
+  .process-filename, .process-actions { grid-column: 1; }
+  .process-actions { flex-wrap: wrap; }
   footer { flex-direction: column; }
 }
 

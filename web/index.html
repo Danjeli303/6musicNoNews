@@ -31,6 +31,7 @@
           </a>
           <nav aria-label="Primary navigation">
             <a class="active" href="/" aria-current="page">Process a programme</a>
+            <a href="#activity">Your activity</a>
             <a href="/hls/radio6music_noNews.m3u8">Live stream</a>
           </nav>
         </div>
@@ -119,6 +120,36 @@
             <span>Download news-skipped file</span>
             <span aria-hidden="true">↓</span>
           </a>
+        </section>
+
+        <section id="activity" class="activity-section" aria-labelledby="activity-title">
+          <div class="activity-heading">
+            <div>
+              <p class="eyebrow">Processing library</p>
+              <h2 id="activity-title">Your activity</h2>
+              <p>Follow programmes in progress and manage finished downloads on this server.</p>
+            </div>
+            <button id="refresh-jobs" class="quiet-button" type="button">Refresh</button>
+          </div>
+
+          <div class="activity-group" aria-labelledby="current-title">
+            <div class="group-heading">
+              <h3 id="current-title">Current processes</h3>
+              <span id="active-count" class="count-badge">0</span>
+            </div>
+            <div id="active-jobs" class="process-list"></div>
+            <p id="active-empty" class="empty-state">No programmes are currently processing.</p>
+          </div>
+
+          <div class="activity-group" aria-labelledby="history-title">
+            <div class="group-heading">
+              <h3 id="history-title">Previously processed</h3>
+              <span id="history-count" class="count-badge">0</span>
+            </div>
+            <div id="history-jobs" class="process-list"></div>
+            <p id="history-empty" class="empty-state">No programmes have been processed yet.</p>
+          </div>
+          <p id="library-message" class="library-message" aria-live="polite"></p>
         </section>
 
         <footer>

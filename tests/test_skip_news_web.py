@@ -165,6 +165,50 @@ cp "$1" "$2"
 
 
 class JobStoreTests(unittest.TestCase):
+    def test_discovers_previously_processed_outputs(self):
+        with tempfile.TemporaryDirectory() as temp_root:
+            output_dir = Path(temp_root) / "output"
+            output_dir.mkdir()
+            result = output_dir / "m0030yw7_newsskip.m4a"
+            result.write_bytes(b"previous audio")
+            (output_dir / "m0030yw7_newsskip.log").write_text(
+                "processing log", encoding="utf-8"
+            )
+
+            store = skip_news_web.JobStore(ROOT / "get_iplayer_skip_news.sh", output_dir)
+            jobs = store.list_jobs()
+
+            self.assertEqual(jobs["active"], [])
+            self.assertEqual(len(jobs["history"]), 1)
+            self.assertEqual(jobs["history"][0]["pid"], "m0030yw7")
+            self.assertEqual(jobs["history"][0]["filename"], result.name)
+            self.assertEqual(jobs["history"][0]["file_size"], len(b"previous audio"))
+
+    def test_removes_processed_audio_and_log(self):
+        with tempfile.TemporaryDirectory() as temp_root:
+            output_dir = Path(temp_root) / "output"
+            output_dir.mkdir()
+            result = output_dir / "m0030yw7_newsskip.m4a"
+            log = output_dir / "m0030yw7_newsskip.log"
+            result.write_bytes(b"audio")
+            log.write_text("log", encoding="utf-8")
+            store = skip_news_web.JobStore(ROOT / "get_iplayer_skip_news.sh", output_dir)
+            archived = store.list_jobs()["history"][0]
+
+            removed = store.remove(archived["id"])
+
+            self.assertEqual(removed["filename"], result.name)
+            self.assertFalse(result.exists())
+            self.assertFalse(log.exists())
+            self.assertEqual(store.list_jobs()["history"], [])
+
+    def test_does_not_remove_an_active_job(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            store = skip_news_web.JobStore(ROOT / "get_iplayer_skip_news.sh", output_dir)
+            store.jobs["active"] = {"status": "running", "filename": None}
+            with self.assertRaises(skip_news_web.ActiveJobError):
+                store.remove("active")
+
     def test_completed_job_exposes_download_url(self):
         with tempfile.TemporaryDirectory() as temp_root:
             root = Path(temp_root)
@@ -186,6 +230,7 @@ class JobStoreTests(unittest.TestCase):
             self.assertEqual(snapshot["status"], "complete", snapshot["logs"])
             self.assertEqual(snapshot["progress"], 100)
             self.assertEqual(snapshot["filename"], result.name)
+            self.assertEqual(snapshot["file_size"], len(b"audio"))
             self.assertEqual(snapshot["download_url"], "/downloads/" + result.name)
 
     @staticmethod

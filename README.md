@@ -108,9 +108,12 @@ the job. Caddy serves the page on the same hostname and HTTPS ports as the HLS
 stream, which remains at
 `https://PUBLIC_HOST/hls/radio6music_noNews.m3u8`. The page reports download and
 news-removal progress, then displays a download button for the completed audio
-file. Results persist in the `skipper_downloads` Docker volume. Both the HLS
-worker and web worker run from the same `six-music-skipper:local` image built by
-Compose.
+file. The activity section shows queued and running processes with live status,
+alongside previously processed programmes that can be downloaded again or
+removed from the server. Results persist in the `skipper_downloads` Docker
+volume and reappear after a container restart. Removing an item deletes its
+audio and processing log. Both the HLS worker and web worker run from the same
+`six-music-skipper:local` image built by Compose.
 
 For host-only use without Docker:
 

@@ -2,6 +2,7 @@
 """Local web interface for downloading and processing BBC Sounds programmes."""
 
 import argparse
+import hashlib
 import json
 import mimetypes
 import os
@@ -25,6 +26,22 @@ PID_PATTERN = re.compile(r"^[a-z0-9]{8}$")
 ANSI_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 DOWNLOAD_PROGRESS_PATTERN = re.compile(r"(?:^|\s)(\d{1,3}(?:\.\d+)?)%")
 PROCESS_PROGRESS_PATTERN = re.compile(r"Processed:\s*(\d{1,3})%")
+MEDIA_EXTENSIONS = {
+    ".flac",
+    ".m4a",
+    ".m4b",
+    ".mp3",
+    ".mp4",
+    ".oga",
+    ".ogg",
+    ".opus",
+    ".wav",
+}
+OUTPUT_PID_PATTERN = re.compile(r"^([a-z0-9]{8})_newsskip(?:_\d+)?$")
+
+
+class ActiveJobError(RuntimeError):
+    """Raised when deletion is requested for a job that is still processing."""
 
 
 def parse_bbc_sounds_url(value):
@@ -70,6 +87,45 @@ class JobStore:
         self.jobs = {}
         self.lock = threading.Lock()
         self.processing_lock = threading.Lock()
+        self._discover_existing_outputs()
+
+    @staticmethod
+    def _snapshot_job(job):
+        snapshot = dict(job)
+        snapshot["logs"] = list(job["logs"])
+        return snapshot
+
+    def _discover_existing_outputs(self):
+        for output_path in self.output_dir.iterdir():
+            if (
+                not output_path.is_file()
+                or output_path.suffix.lower() not in MEDIA_EXTENSIONS
+            ):
+                continue
+            match = OUTPUT_PID_PATTERN.fullmatch(output_path.stem)
+            pid = match.group(1) if match else None
+            digest = hashlib.sha256(output_path.name.encode("utf-8")).hexdigest()
+            job_id = "archive-" + digest[:16]
+            modified = datetime.fromtimestamp(
+                output_path.stat().st_mtime, timezone.utc
+            ).isoformat()
+            self.jobs[job_id] = {
+                "id": job_id,
+                "url": None,
+                "pid": pid,
+                "title": "BBC Sounds programme " + pid if pid else output_path.stem,
+                "status": "complete",
+                "stage": "complete",
+                "stage_label": "Ready to download",
+                "progress": 100,
+                "stage_progress": 100,
+                "message": "This previously processed programme is ready.",
+                "logs": deque(maxlen=80),
+                "filename": output_path.name,
+                "file_size": output_path.stat().st_size,
+                "download_url": "/downloads/" + quote(output_path.name),
+                "created_at": modified,
+            }
 
     def create(self, sounds_url):
         pid = parse_bbc_sounds_url(sounds_url)
@@ -84,6 +140,7 @@ class JobStore:
             "id": job_id,
             "url": sounds_url.strip(),
             "pid": pid,
+            "title": "BBC Sounds programme " + pid,
             "status": "queued",
             "stage": "queued",
             "stage_label": "Waiting to start",
@@ -92,6 +149,7 @@ class JobStore:
             "message": "Your programme is queued.",
             "logs": deque(maxlen=80),
             "filename": None,
+            "file_size": None,
             "download_url": None,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -105,9 +163,36 @@ class JobStore:
             job = self.jobs.get(job_id)
             if job is None:
                 return None
-            snapshot = dict(job)
-            snapshot["logs"] = list(job["logs"])
-            return snapshot
+            return self._snapshot_job(job)
+
+    def list_jobs(self):
+        with self.lock:
+            snapshots = [self._snapshot_job(job) for job in self.jobs.values()]
+        active = [job for job in snapshots if job["status"] in {"queued", "running"}]
+        history = [job for job in snapshots if job["status"] in {"complete", "failed"}]
+        active.sort(key=lambda job: job["created_at"])
+        history.sort(key=lambda job: job["created_at"], reverse=True)
+        return {"active": active, "history": history}
+
+    def remove(self, job_id):
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if job is None:
+                return None
+            if job["status"] in {"queued", "running"}:
+                raise ActiveJobError("A programme cannot be removed while it is processing.")
+            filename = job.get("filename")
+
+        if filename:
+            output_path = (self.output_dir / filename).resolve()
+            if output_path.parent != self.output_dir or output_path.name != filename:
+                raise RuntimeError("The stored output filename is invalid.")
+            output_path.unlink(missing_ok=True)
+            output_path.with_suffix(".log").unlink(missing_ok=True)
+
+        with self.lock:
+            removed = self.jobs.pop(job_id, None)
+            return self._snapshot_job(removed) if removed else None
 
     def _update(self, job_id, **values):
         with self.lock:
@@ -154,6 +239,7 @@ class JobStore:
             self._update(
                 job_id,
                 filename=filename,
+                file_size=output_path.stat().st_size,
                 download_url="/downloads/" + quote(filename),
             )
             return
@@ -306,6 +392,8 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
             self._send_static("app.js")
         elif path == "/styles.css":
             self._send_static("styles.css")
+        elif path == "/api/jobs":
+            self._send_json(HTTPStatus.OK, self.server.job_store.list_jobs())
         elif path.startswith("/api/jobs/"):
             job_id = path.rsplit("/", 1)[-1]
             job = self.server.job_store.snapshot(job_id)
@@ -342,6 +430,28 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
         self._send_json(HTTPStatus.ACCEPTED, job)
+
+    def do_DELETE(self):
+        path = urlsplit(self.path).path
+        if not path.startswith("/api/jobs/"):
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        job_id = path.rsplit("/", 1)[-1]
+        try:
+            removed = self.server.job_store.remove(job_id)
+        except ActiveJobError as exc:
+            self._send_json(HTTPStatus.CONFLICT, {"error": str(exc)})
+            return
+        except (OSError, RuntimeError):
+            self._send_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                {"error": "The programme could not be removed from the server."},
+            )
+            return
+        if removed is None:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "Job not found."})
+            return
+        self._send_json(HTTPStatus.OK, {"removed": True, "id": job_id})
 
 
 class SkipNewsServer(ThreadingHTTPServer):
