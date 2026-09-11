@@ -604,20 +604,28 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 .artwork-play {
   position: absolute;
   inset: 50% auto auto 50%;
-  width: 64px;
-  height: 64px;
+  width: 72px;
+  height: 72px;
   min-height: 0;
   display: grid;
   place-items: center;
-  padding: 0 0 2px 3px;
+  padding: 0;
   border: 2px solid #fff;
   border-radius: 50%;
   color: #fff;
   background: rgba(0, 0, 0, 0.84);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  font-size: 2rem;
-  line-height: 1;
+  font-size: 0;
   transform: translate(-50%, -50%);
+}
+
+.artwork-play::before {
+  content: "";
+  width: 42px;
+  height: 46px;
+  background: currentColor;
+  clip-path: polygon(10% 0, 100% 50%, 10% 100%);
+  transform: translateX(2px);
 }
 
 .artwork-play:hover {
@@ -628,10 +636,15 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 
 .artwork-play:active { transform: translate(-50%, -50%) scale(0.98); }
 .artwork-play.is-playing {
-  padding: 0 0 2px;
   color: #111;
   background: var(--sounds-light);
-  font-size: 1.85rem;
+}
+
+.artwork-play.is-playing::before {
+  width: 40px;
+  height: 40px;
+  clip-path: none;
+  transform: none;
 }
 
 .programme-details { min-width: 0; }

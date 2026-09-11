@@ -36,7 +36,6 @@ function stopHistoryPlayer(entry) {
     // The player may not have loaded its metadata yet.
   }
   entry.button.classList.remove("is-playing");
-  entry.button.textContent = "▶";
   entry.button.setAttribute("aria-label", `Play ${entry.title}`);
   entry.status.textContent = "Stopped.";
 }
@@ -146,7 +145,7 @@ function createProcessItem(job, isActive) {
     }
 
     if (job.status === "complete" && job.media_url) {
-      const playButton = makeElement("button", "artwork-play", "▶");
+      const playButton = makeElement("button", "artwork-play");
       playButton.type = "button";
       playButton.dataset.playJobId = job.id;
       playButton.setAttribute("aria-label", `Play ${title}`);
@@ -291,7 +290,6 @@ function initialiseHistoryPlayers(history) {
     player.on("play", () => {
       enforceExclusivePlayback(player);
       button.classList.add("is-playing");
-      button.textContent = "■";
       button.setAttribute("aria-label", `Stop ${title}`);
       status.textContent = "Starting…";
     });
@@ -300,14 +298,12 @@ function initialiseHistoryPlayers(history) {
     });
     player.on("pause", () => {
       button.classList.remove("is-playing");
-      button.textContent = "▶";
       button.setAttribute("aria-label", `Play ${title}`);
       if (status.textContent !== "Stopped.") status.textContent = "Paused.";
     });
     player.on("ended", () => stopHistoryPlayer(entry));
     player.on("error", () => {
       button.classList.remove("is-playing");
-      button.textContent = "▶";
       button.setAttribute("aria-label", `Play ${title}`);
       status.textContent = "This programme could not be played.";
     });
