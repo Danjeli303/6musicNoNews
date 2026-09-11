@@ -65,6 +65,39 @@ class ProgressTests(unittest.TestCase):
             self.assertEqual(store.snapshot(job_id)["progress"], 73)
 
 
+class MediaMetadataTests(unittest.TestCase):
+    def test_builds_programme_title_from_embedded_m4a_tags(self):
+        details = skip_news_web.media_details_from_tags(
+            {
+                "artist": "Gilles Peterson",
+                "title": (
+                    "Carlos Icaza in the studio, Cassandra Wilson tribute, "
+                    "words from anaiis"
+                ),
+                "album": "Gilles Peterson",
+                "description": "A musical journey from BBC Radio 6 Music.",
+            },
+            pid="m0030yw7",
+            filename="m0030yw7_newsskip.m4a",
+        )
+
+        self.assertEqual(
+            details["display_title"],
+            "Gilles Peterson - Carlos Icaza in the studio, Cassandra Wilson "
+            "tribute, words from anaiis",
+        )
+        self.assertEqual(details["album"], "Gilles Peterson")
+        self.assertEqual(
+            details["description"], "A musical journey from BBC Radio 6 Music."
+        )
+
+    def test_uses_pid_fallback_when_tags_are_unavailable(self):
+        details = skip_news_web.media_details_from_tags(
+            {}, pid="m0030yw7", filename="m0030yw7_newsskip.m4a"
+        )
+        self.assertEqual(details["display_title"], "BBC Sounds programme m0030yw7")
+
+
 class WrapperTests(unittest.TestCase):
     @staticmethod
     def _write_executable(path, body):
@@ -183,6 +216,7 @@ class JobStoreTests(unittest.TestCase):
             self.assertEqual(jobs["history"][0]["pid"], "m0030yw7")
             self.assertEqual(jobs["history"][0]["filename"], result.name)
             self.assertEqual(jobs["history"][0]["file_size"], len(b"previous audio"))
+            self.assertEqual(jobs["history"][0]["media_url"], "/media/" + result.name)
 
     def test_removes_processed_audio_and_log(self):
         with tempfile.TemporaryDirectory() as temp_root:
@@ -190,16 +224,23 @@ class JobStoreTests(unittest.TestCase):
             output_dir.mkdir()
             result = output_dir / "m0030yw7_newsskip.m4a"
             log = output_dir / "m0030yw7_newsskip.log"
+            artwork = output_dir / "m0030yw7_newsskip.artwork.jpg"
             result.write_bytes(b"audio")
             log.write_text("log", encoding="utf-8")
+            artwork.write_bytes(b"artwork")
             store = skip_news_web.JobStore(ROOT / "get_iplayer_skip_news.sh", output_dir)
             archived = store.list_jobs()["history"][0]
+            self.assertEqual(
+                archived["artwork_url"],
+                "/artwork/m0030yw7_newsskip.artwork.jpg",
+            )
 
             removed = store.remove(archived["id"])
 
             self.assertEqual(removed["filename"], result.name)
             self.assertFalse(result.exists())
             self.assertFalse(log.exists())
+            self.assertFalse(artwork.exists())
             self.assertEqual(store.list_jobs()["history"], [])
 
     def test_does_not_remove_an_active_job(self):
@@ -232,6 +273,7 @@ class JobStoreTests(unittest.TestCase):
             self.assertEqual(snapshot["filename"], result.name)
             self.assertEqual(snapshot["file_size"], len(b"audio"))
             self.assertEqual(snapshot["download_url"], "/downloads/" + result.name)
+            self.assertEqual(snapshot["media_url"], "/media/" + result.name)
 
     @staticmethod
     def _write_processor(path, result):
@@ -272,6 +314,9 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('src="/vendor/video.js/video.min.js"', html)
         self.assertIn('href="/vendor/video.js/video-js.min.css"', html)
         self.assertIn('window.videojs("live-radio-player"', app)
+        self.assertIn("enforceExclusivePlayback", app)
+        self.assertIn("autoplay: false", app)
+        self.assertNotIn("<audio autoplay", html)
         self.assertGreater((vendor_dir / "video.min.js").stat().st_size, 100_000)
         self.assertTrue((vendor_dir / "video-js.min.css").is_file())
         self.assertTrue((vendor_dir / "LICENSE").is_file())

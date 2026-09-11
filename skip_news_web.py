@@ -38,6 +38,18 @@ MEDIA_EXTENSIONS = {
     ".wav",
 }
 OUTPUT_PID_PATTERN = re.compile(r"^([a-z0-9]{8})_newsskip(?:_\d+)?$")
+BYTE_RANGE_PATTERN = re.compile(r"^bytes=(\d*)-(\d*)$")
+MEDIA_CONTENT_TYPES = {
+    ".flac": "audio/flac",
+    ".m4a": "audio/mp4",
+    ".m4b": "audio/mp4",
+    ".mp3": "audio/mpeg",
+    ".mp4": "audio/mp4",
+    ".oga": "audio/ogg",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".wav": "audio/wav",
+}
 
 
 class ActiveJobError(RuntimeError):
@@ -79,6 +91,46 @@ def iter_process_messages(stream):
             pending.append(char)
 
 
+def _metadata_value(tags, *names, limit=500):
+    for name in names:
+        value = tags.get(name)
+        if value is None:
+            continue
+        clean = " ".join(str(value).split())
+        if clean:
+            return clean[:limit]
+    return None
+
+
+def media_details_from_tags(tags, pid=None, filename=None):
+    """Return display metadata from ffprobe format tags."""
+    normalized = {str(key).lower(): value for key, value in (tags or {}).items()}
+    fallback = "BBC Sounds programme " + pid if pid else Path(filename or "Programme").stem
+    title = _metadata_value(
+        normalized, "title", "episode", "episode_title", limit=200
+    ) or fallback
+    artist = _metadata_value(
+        normalized, "artist", "album_artist", "albumartist", "show", limit=160
+    )
+    album = _metadata_value(
+        normalized, "album", "show", "series", "programme", limit=200
+    )
+    description = _metadata_value(
+        normalized, "description", "synopsis", "comment", "desc", limit=800
+    )
+    if artist and artist.casefold() not in title.casefold():
+        display_title = artist + " - " + title
+    else:
+        display_title = title
+    return {
+        "title": title,
+        "artist": artist,
+        "album": album,
+        "description": description,
+        "display_title": display_title,
+    }
+
+
 class JobStore:
     def __init__(self, script_path, output_dir):
         self.script_path = Path(script_path).resolve()
@@ -98,7 +150,8 @@ class JobStore:
     def _discover_existing_outputs(self):
         for output_path in self.output_dir.iterdir():
             if (
-                not output_path.is_file()
+                output_path.is_symlink()
+                or not output_path.is_file()
                 or output_path.suffix.lower() not in MEDIA_EXTENSIONS
             ):
                 continue
@@ -109,11 +162,12 @@ class JobStore:
             modified = datetime.fromtimestamp(
                 output_path.stat().st_mtime, timezone.utc
             ).isoformat()
+            media_details = self._media_details(output_path, pid)
             self.jobs[job_id] = {
                 "id": job_id,
                 "url": None,
                 "pid": pid,
-                "title": "BBC Sounds programme " + pid if pid else output_path.stem,
+                **media_details,
                 "status": "complete",
                 "stage": "complete",
                 "stage_label": "Ready to download",
@@ -126,6 +180,96 @@ class JobStore:
                 "download_url": "/downloads/" + quote(output_path.name),
                 "created_at": modified,
             }
+
+    @staticmethod
+    def _artwork_path(output_path):
+        return output_path.with_name(output_path.stem + ".artwork.jpg")
+
+    def _extract_artwork(self, output_path):
+        artwork_path = self._artwork_path(output_path)
+        if artwork_path.is_file() and artwork_path.stat().st_size:
+            return artwork_path
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            return None
+        temporary_path = artwork_path.with_name(artwork_path.name + ".tmp")
+        try:
+            result = subprocess.run(
+                [
+                    ffmpeg,
+                    "-v",
+                    "error",
+                    "-y",
+                    "-i",
+                    str(output_path),
+                    "-map",
+                    "0:v:0",
+                    "-frames:v",
+                    "1",
+                    "-an",
+                    "-c:v",
+                    "mjpeg",
+                    "-f",
+                    "image2",
+                    str(temporary_path),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+                check=False,
+            )
+            if result.returncode == 0 and temporary_path.is_file():
+                temporary_path.replace(artwork_path)
+                return artwork_path
+        except (OSError, subprocess.SubprocessError):
+            pass
+        finally:
+            temporary_path.unlink(missing_ok=True)
+        return None
+
+    def _media_details(self, output_path, pid):
+        tags = {}
+        ffprobe = shutil.which("ffprobe")
+        if ffprobe:
+            try:
+                result = subprocess.run(
+                    [
+                        ffprobe,
+                        "-v",
+                        "error",
+                        "-show_entries",
+                        "format_tags",
+                        "-of",
+                        "json",
+                        str(output_path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=15,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    payload = json.loads(result.stdout)
+                    tags = payload.get("format", {}).get("tags", {})
+            except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+                pass
+
+        details = media_details_from_tags(tags, pid, output_path.name)
+        artwork_path = self._extract_artwork(output_path)
+        details.update(
+            {
+                "media_url": "/media/" + quote(output_path.name),
+                "media_type": MEDIA_CONTENT_TYPES.get(
+                    output_path.suffix.lower(), "application/octet-stream"
+                ),
+                "artwork_url": (
+                    "/artwork/" + quote(artwork_path.name) if artwork_path else None
+                ),
+            }
+        )
+        return details
 
     def create(self, sounds_url):
         pid = parse_bbc_sounds_url(sounds_url)
@@ -141,6 +285,10 @@ class JobStore:
             "url": sounds_url.strip(),
             "pid": pid,
             "title": "BBC Sounds programme " + pid,
+            "artist": None,
+            "album": None,
+            "description": None,
+            "display_title": "BBC Sounds programme " + pid,
             "status": "queued",
             "stage": "queued",
             "stage_label": "Waiting to start",
@@ -151,6 +299,9 @@ class JobStore:
             "filename": None,
             "file_size": None,
             "download_url": None,
+            "media_url": None,
+            "media_type": None,
+            "artwork_url": None,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         with self.lock:
@@ -189,6 +340,7 @@ class JobStore:
                 raise RuntimeError("The stored output filename is invalid.")
             output_path.unlink(missing_ok=True)
             output_path.with_suffix(".log").unlink(missing_ok=True)
+            self._artwork_path(output_path).unlink(missing_ok=True)
 
         with self.lock:
             removed = self.jobs.pop(job_id, None)
@@ -301,8 +453,11 @@ class JobStore:
                     )
                 if not completed["filename"]:
                     raise RuntimeError("Processing finished without an output file.")
+                output_path = self.output_dir / completed["filename"]
+                media_details = self._media_details(output_path, completed["pid"])
                 self._update(
                     job_id,
+                    **media_details,
                     status="complete",
                     stage="complete",
                     stage_label="Ready to download",
@@ -365,26 +520,113 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_download(self, encoded_name):
+    def _resolve_output_file(self, encoded_name):
         filename = unquote(encoded_name)
         if not filename or filename != Path(filename).name:
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
+            return None
         file_path = (self.server.job_store.output_dir / filename).resolve()
         if file_path.parent != self.server.job_store.output_dir or not file_path.is_file():
+            return None
+        return file_path
+
+    def _send_download(self, encoded_name):
+        file_path = self._resolve_output_file(encoded_name)
+        if file_path is None or file_path.suffix.lower() not in MEDIA_EXTENSIONS:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header(
+            "Content-Type",
+            MEDIA_CONTENT_TYPES.get(file_path.suffix.lower(), "application/octet-stream"),
+        )
         self.send_header("Content-Length", str(file_path.stat().st_size))
         self.send_header(
-            "Content-Disposition", "attachment; filename*=UTF-8''" + quote(filename)
+            "Content-Disposition",
+            "attachment; filename*=UTF-8''" + quote(file_path.name),
         )
         self.send_header("Cache-Control", "private, no-store")
         self._security_headers()
         self.end_headers()
         with file_path.open("rb") as source:
             shutil.copyfileobj(source, self.wfile)
+
+    def _send_media(self, encoded_name):
+        file_path = self._resolve_output_file(encoded_name)
+        if file_path is None or file_path.suffix.lower() not in MEDIA_EXTENSIONS:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+
+        size = file_path.stat().st_size
+        start = 0
+        end = size - 1
+        status = HTTPStatus.OK
+        range_header = self.headers.get("Range")
+        if range_header:
+            match = BYTE_RANGE_PATTERN.fullmatch(range_header.strip())
+            if not match or not any(match.groups()):
+                self._send_range_error(size)
+                return
+            start_text, end_text = match.groups()
+            if start_text:
+                start = int(start_text)
+                end = min(int(end_text), size - 1) if end_text else size - 1
+            else:
+                suffix_length = int(end_text)
+                if suffix_length < 1:
+                    self._send_range_error(size)
+                    return
+                start = max(0, size - suffix_length)
+            if start >= size or end < start:
+                self._send_range_error(size)
+                return
+            status = HTTPStatus.PARTIAL_CONTENT
+
+        content_length = end - start + 1
+        self.send_response(status)
+        self.send_header(
+            "Content-Type",
+            MEDIA_CONTENT_TYPES.get(file_path.suffix.lower(), "application/octet-stream"),
+        )
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(content_length))
+        if status == HTTPStatus.PARTIAL_CONTENT:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Cache-Control", "private, no-cache")
+        self._security_headers()
+        self.end_headers()
+        remaining = content_length
+        with file_path.open("rb") as source:
+            source.seek(start)
+            while remaining:
+                chunk = source.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                try:
+                    self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    break
+                remaining -= len(chunk)
+
+    def _send_range_error(self, size):
+        self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+        self.send_header("Content-Range", f"bytes */{size}")
+        self.send_header("Content-Length", "0")
+        self._security_headers()
+        self.end_headers()
+
+    def _send_artwork(self, encoded_name):
+        file_path = self._resolve_output_file(encoded_name)
+        if file_path is None or not file_path.name.endswith(".artwork.jpg"):
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        body = file_path.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "private, max-age=3600")
+        self._security_headers()
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_GET(self):
         path = urlsplit(self.path).path
@@ -407,6 +649,10 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.OK, job)
         elif path.startswith("/downloads/"):
             self._send_download(path[len("/downloads/") :])
+        elif path.startswith("/media/"):
+            self._send_media(path[len("/media/") :])
+        elif path.startswith("/artwork/"):
+            self._send_artwork(path[len("/artwork/") :])
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 

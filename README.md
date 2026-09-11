@@ -111,10 +111,13 @@ stream, which remains at
 stream, reports download and news-removal progress, then displays a download
 button for the completed audio file. The activity section shows queued and
 running processes with live status, alongside previously processed programmes
-that can be downloaded again or removed from the server. Results persist in the
-`skipper_downloads` Docker volume and reappear after a container restart.
-Removing an item deletes its audio and processing log. Both the HLS worker and
-web worker run from the same `six-music-skipper:local` image built by Compose.
+with their embedded title, artist, album, description and cover art. Completed
+programmes can be played with Video.js, downloaded again, or removed from the
+server. Playback never starts automatically and starting any player stops all
+other live or recorded audio. Results persist in the `skipper_downloads` Docker
+volume and reappear after a container restart. Removing an item deletes its
+audio, processing log and extracted artwork. Both the HLS worker and web worker
+run from the same `six-music-skipper:local` image built by Compose.
 
 For host-only use without Docker:
 
