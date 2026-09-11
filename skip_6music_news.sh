@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-DEFAULT_INPUT="/Users/danielschembri/Desktop/iPlayer Recordings/Gilles_Peterson_-_Zakia_Sewell_sits_in_Cameron_Winter_m002b79h_original.m4a"
+DEFAULT_INPUT="${SKIPPER_INPUT:-}"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 SKIPPER="$SCRIPT_DIR/skipper"
 SAMPLE_RATE=48000
@@ -10,8 +10,8 @@ AAC_CODER="${AAC_CODER:-fast}"
 SKIPPER_WINDOW="${NEWS_SCHEDULE:-$SCRIPT_DIR/news_schedule.ini}"
 
 usage() {
-    printf 'Usage: %s [--check] [--profile] [-w ranges-or-file] [input.ext] [output.ext]\n' "$0"
-    printf 'Defaults to the Gilles Peterson iPlayer recording.\n'
+    printf 'Usage: %s [--check] [--profile] [-w ranges-or-file] input.ext [output.ext]\n' "$0"
+    printf 'Set SKIPPER_INPUT to make the input argument optional.\n'
     printf 'With one input file, writes input-name_newsskip.ext beside the input.\n'
     printf 'Default skipper schedule/window: %s\n' "$SKIPPER_WINDOW"
 }
@@ -432,6 +432,13 @@ while [ "$#" -gt 0 ]; do
 done
 
 INPUT=${INPUT_ARG:-$DEFAULT_INPUT}
+
+if [ -z "$INPUT" ]; then
+    printf 'Error: no input file specified. Pass an input file or set SKIPPER_INPUT.\n' >&2
+    usage >&2
+    exit 1
+fi
+
 OUTPUT=${OUTPUT_ARG:-$(default_output_for_input "$INPUT")}
 LOG="${OUTPUT%.*}.log"
 
@@ -443,6 +450,11 @@ fi
 require_command ffmpeg
 require_command ffprobe
 require_command make
+
+if [ "$PROFILE_ONLY" -eq 1 ]; then
+    require_command /usr/bin/time
+fi
+
 ensure_skipper
 
 START_TIME=$(get_recorded_start_time)
