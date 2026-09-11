@@ -23,6 +23,18 @@ require_command() {
     fi
 }
 
+run_pipeline_stage() {
+    status_file=$1
+    log_file=$2
+    shift 2
+
+    set +e
+    "$@" 2>"$log_file"
+    stage_status=$?
+    printf '%s\n' "$stage_status" >"$status_file"
+    return "$stage_status"
+}
+
 ensure_skipper() {
     if [ ! -x "$SKIPPER" ]; then
         make -C "$SCRIPT_DIR" skipper
@@ -264,14 +276,6 @@ finish_progress_monitor() {
 }
 
 cleanup_progress_monitor() {
-    for pid in ${DECODE_PID:-} ${SKIPPER_PID:-} ${ENCODE_PID:-}; do
-        kill "$pid" 2>/dev/null || true
-        wait "$pid" 2>/dev/null || true
-    done
-    DECODE_PID=
-    SKIPPER_PID=
-    ENCODE_PID=
-
     if [ "${PROGRESS_PID:-}" ]; then
         kill "$PROGRESS_PID" 2>/dev/null || true
         wait "$PROGRESS_PID" 2>/dev/null || true
@@ -492,56 +496,50 @@ fi
 start_progress_monitor
 trap cleanup_progress_monitor EXIT HUP INT TERM
 
-DECODE_FIFO="$PROGRESS_DIR/decode.pcm"
-SKIPPED_FIFO="$PROGRESS_DIR/skipped.pcm"
 DECODE_LOG="$PROGRESS_DIR/decode.log"
 SKIPPER_LOG="$PROGRESS_DIR/skipper.log"
 ENCODE_LOG="$PROGRESS_DIR/encode.log"
-mkfifo "$DECODE_FIFO" "$SKIPPED_FIFO"
+DECODE_STATUS_FILE="$PROGRESS_DIR/decode.status"
+SKIPPER_STATUS_FILE="$PROGRESS_DIR/skipper.status"
 : >"$LOG"
 
-# Run the stages separately instead of as a shell pipeline. POSIX sh only
-# exposes the exit status of the last pipeline command, which previously let a
-# failed decoder or skipper produce a corrupt output followed by "Done".
-ffmpeg \
-  -hide_banner \
-  -loglevel warning \
-  -y \
-  -f s16le -ar "$INPUT_SAMPLE_RATE" -ac "$INPUT_CHANNELS" -i "$SKIPPED_FIFO" \
-  -i "$INPUT" \
-  -map 0:a:0 \
-  $ARTWORK_MAP \
-  -map_metadata 1 \
-  -map_metadata:s:a:0 1:s:a:0 \
-  -map_chapters 1 \
-  $AUDIO_CODEC_ARGS \
-  $VIDEO_CODEC_ARGS \
-  $MUXER_ARGS \
-  $FORMAT_ARGS \
-  "$OUTPUT" 2>"$ENCODE_LOG" &
-ENCODE_PID=$!
+# POSIX sh reports only the final command's pipeline status, so record the
+# decoder and skipper statuses separately.
+if run_pipeline_stage "$DECODE_STATUS_FILE" "$DECODE_LOG" \
+    ffmpeg \
+      -hide_banner \
+      -loglevel warning \
+      -nostats \
+      -progress "$PROGRESS_FIFO" \
+      -i "$INPUT" \
+      -vn \
+      -f s16le -ar "$INPUT_SAMPLE_RATE" -ac "$INPUT_CHANNELS" pipe:1 | \
+  run_pipeline_stage "$SKIPPER_STATUS_FILE" "$SKIPPER_LOG" \
+    "$SKIPPER" -t -x -w "$SKIPPER_WINDOW" -s"$INPUT_SAMPLE_RATE" -c"$INPUT_CHANNELS" -T "$START_TIME" -z "$UTC_OFFSET" | \
+  ffmpeg \
+      -hide_banner \
+      -loglevel warning \
+      -y \
+      -f s16le -ar "$INPUT_SAMPLE_RATE" -ac "$INPUT_CHANNELS" -i pipe:0 \
+      -i "$INPUT" \
+      -map 0:a:0 \
+      $ARTWORK_MAP \
+      -map_metadata 1 \
+      -map_metadata:s:a:0 1:s:a:0 \
+      -map_chapters 1 \
+      $AUDIO_CODEC_ARGS \
+      $VIDEO_CODEC_ARGS \
+      $MUXER_ARGS \
+      $FORMAT_ARGS \
+      "$OUTPUT" 2>"$ENCODE_LOG"
+then
+    ENCODE_STATUS=0
+else
+    ENCODE_STATUS=$?
+fi
 
-ffmpeg \
-  -hide_banner \
-  -loglevel warning \
-  -nostats \
-  -y \
-  -progress "$PROGRESS_FIFO" \
-  -i "$INPUT" \
-  -vn \
-  -f s16le -ar "$INPUT_SAMPLE_RATE" -ac "$INPUT_CHANNELS" "$DECODE_FIFO" 2>"$DECODE_LOG" &
-DECODE_PID=$!
-
-"$SKIPPER" -t -x -w "$SKIPPER_WINDOW" -s"$INPUT_SAMPLE_RATE" -c"$INPUT_CHANNELS" -T "$START_TIME" -z "$UTC_OFFSET" \
-  <"$DECODE_FIFO" >"$SKIPPED_FIFO" 2>"$SKIPPER_LOG" &
-SKIPPER_PID=$!
-
-if wait "$DECODE_PID"; then DECODE_STATUS=0; else DECODE_STATUS=$?; fi
-if wait "$SKIPPER_PID"; then SKIPPER_STATUS=0; else SKIPPER_STATUS=$?; fi
-if wait "$ENCODE_PID"; then ENCODE_STATUS=0; else ENCODE_STATUS=$?; fi
-DECODE_PID=
-SKIPPER_PID=
-ENCODE_PID=
+DECODE_STATUS=$(cat "$DECODE_STATUS_FILE")
+SKIPPER_STATUS=$(cat "$SKIPPER_STATUS_FILE")
 
 finish_progress_monitor
 
