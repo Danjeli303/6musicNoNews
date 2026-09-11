@@ -262,6 +262,20 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(compose.count("target: skipper-runtime"), 2)
         self.assertNotIn("SKIP_NEWS_WEB_PORT", compose)
 
+    def test_live_player_is_bundled_and_uses_the_local_hls_stream(self):
+        html = (ROOT / "web/index.html").read_text(encoding="utf-8")
+        app = (ROOT / "web/app.js").read_text(encoding="utf-8")
+        vendor_dir = ROOT / "web/vendor/video.js"
+
+        self.assertIn('id="live-radio-player"', html)
+        self.assertIn('src="/hls/radio6music_noNews.m3u8"', html)
+        self.assertIn('src="/vendor/video.js/video.min.js"', html)
+        self.assertIn('href="/vendor/video.js/video-js.min.css"', html)
+        self.assertIn('window.videojs("live-radio-player"', app)
+        self.assertGreater((vendor_dir / "video.min.js").stat().st_size, 100_000)
+        self.assertTrue((vendor_dir / "video-js.min.css").is_file())
+        self.assertTrue((vendor_dir / "LICENSE").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

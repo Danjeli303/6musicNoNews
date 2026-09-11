@@ -333,8 +333,9 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'self'; script-src 'self'; style-src 'self'; "
-            "img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
+            "media-src 'self' blob:; worker-src 'self' blob:; base-uri 'none'; "
             "form-action 'self'; frame-ancestors 'none'",
         )
 
@@ -350,7 +351,8 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
 
     def _send_static(self, relative_path):
         file_path = (WEB_DIR / relative_path).resolve()
-        if file_path.parent != WEB_DIR.resolve() or not file_path.is_file():
+        web_dir = WEB_DIR.resolve()
+        if web_dir not in file_path.parents or not file_path.is_file():
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         body = file_path.read_bytes()
@@ -392,6 +394,8 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
             self._send_static("app.js")
         elif path == "/styles.css":
             self._send_static("styles.css")
+        elif path.startswith("/vendor/"):
+            self._send_static(path.lstrip("/"))
         elif path == "/api/jobs":
             self._send_json(HTTPStatus.OK, self.server.job_store.list_jobs())
         elif path.startswith("/api/jobs/"):

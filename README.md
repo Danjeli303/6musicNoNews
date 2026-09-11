@@ -106,14 +106,15 @@ docker compose up -d --build
 Open `https://PUBLIC_HOST/`, paste a BBC Sounds `/sounds/play/` link, and start
 the job. Caddy serves the page on the same hostname and HTTPS ports as the HLS
 stream, which remains at
-`https://PUBLIC_HOST/hls/radio6music_noNews.m3u8`. The page reports download and
-news-removal progress, then displays a download button for the completed audio
-file. The activity section shows queued and running processes with live status,
-alongside previously processed programmes that can be downloaded again or
-removed from the server. Results persist in the `skipper_downloads` Docker
-volume and reappear after a container restart. Removing an item deletes its
-audio and processing log. Both the HLS worker and web worker run from the same
-`six-music-skipper:local` image built by Compose.
+`https://PUBLIC_HOST/hls/radio6music_noNews.m3u8`. The page includes a bundled
+[Video.js 8.24.1](https://github.com/videojs/video.js) player for this live HLS
+stream, reports download and news-removal progress, then displays a download
+button for the completed audio file. The activity section shows queued and
+running processes with live status, alongside previously processed programmes
+that can be downloaded again or removed from the server. Results persist in the
+`skipper_downloads` Docker volume and reappear after a container restart.
+Removing an item deletes its audio and processing log. Both the HLS worker and
+web worker run from the same `six-music-skipper:local` image built by Compose.
 
 For host-only use without Docker:
 

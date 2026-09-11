@@ -18,10 +18,44 @@ const activeEmpty = document.querySelector("#active-empty");
 const historyEmpty = document.querySelector("#history-empty");
 const libraryMessage = document.querySelector("#library-message");
 const refreshButton = document.querySelector("#refresh-jobs");
+const radioStatus = document.querySelector("#radio-status");
 
 let pollTimer;
 let displayedJobId;
 let libraryRequestInFlight = false;
+
+function initialiseRadioPlayer() {
+  if (typeof window.videojs !== "function") {
+    radioStatus.textContent = "The radio player could not be loaded.";
+    return;
+  }
+
+  const player = window.videojs("live-radio-player", {
+    audioOnlyMode: true,
+    autoplay: false,
+    controls: true,
+    liveui: true,
+    preload: "none",
+    responsive: true,
+  });
+
+  player.on("play", () => {
+    radioStatus.textContent = "Connecting to the live stream…";
+  });
+  player.on("playing", () => {
+    radioStatus.textContent = "Playing live · News-skipped stream";
+  });
+  player.on("waiting", () => {
+    radioStatus.textContent = "Reconnecting to the live stream…";
+  });
+  player.on("pause", () => {
+    radioStatus.textContent = "Live stream paused.";
+  });
+  player.on("error", () => {
+    radioStatus.textContent =
+      "The live stream is temporarily unavailable. Try again shortly.";
+  });
+}
 
 function formatDate(value) {
   const date = new Date(value);
@@ -261,5 +295,6 @@ historyJobs.addEventListener("click", async (event) => {
   }
 });
 
+initialiseRadioPlayer();
 loadJobs();
 setInterval(loadJobs, 2000);

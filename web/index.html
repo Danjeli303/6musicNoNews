@@ -10,6 +10,7 @@
       name="description"
       content="Download a BBC Sounds programme and remove scheduled 6 Music news."
     />
+    <link rel="stylesheet" href="/vendor/video.js/video-js.min.css" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -32,7 +33,7 @@
           <nav aria-label="Primary navigation">
             <a class="active" href="/" aria-current="page">Process a programme</a>
             <a href="#activity">Your activity</a>
-            <a href="/hls/radio6music_noNews.m3u8">Live stream</a>
+            <a href="#live-stream">Live stream</a>
           </nav>
         </div>
       </div>
@@ -122,6 +123,43 @@
           </a>
         </section>
 
+        <section id="live-stream" class="live-section" aria-labelledby="live-title">
+          <div class="live-copy">
+            <div class="on-air"><i aria-hidden="true"></i> Live now</div>
+            <p class="eyebrow">News-skipped radio</p>
+            <h2 id="live-title">Listen to 6 Music live.</h2>
+            <p>
+              The continuous stream keeps the music playing while scheduled news
+              segments are removed.
+            </p>
+          </div>
+          <div class="live-player-panel">
+            <div class="station-mark" aria-hidden="true">
+              <span>6</span>
+              <b>MUSIC</b>
+            </div>
+            <div class="player-area">
+              <p class="stream-label">6 Music · News Skipped</p>
+              <audio
+                id="live-radio-player"
+                class="video-js"
+                controls
+                preload="none"
+                playsinline
+              >
+                <source
+                  src="/hls/radio6music_noNews.m3u8"
+                  type="application/x-mpegURL"
+                />
+                Your browser cannot play this live audio stream.
+              </audio>
+              <p id="radio-status" class="radio-status" aria-live="polite">
+                Ready to play the live stream.
+              </p>
+            </div>
+          </div>
+        </section>
+
         <section id="activity" class="activity-section" aria-labelledby="activity-title">
           <div class="activity-heading">
             <div>
@@ -158,6 +196,7 @@
         </footer>
       </div>
     </main>
+    <script src="/vendor/video.js/video.min.js" defer></script>
     <script src="/app.js" defer></script>
   </body>
 </html>
