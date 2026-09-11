@@ -55,6 +55,7 @@ static const char *usage =
 " Options:  -a <file.bin>    = output analysis results to specified file\n"
 "           -c<n>            = override default channel count of 2\n"
 "           -d <file.tensor> = specify alternate discrimination tensor file\n"
+"           -e               = schedule from monotonic CPU clock (live streams)\n"
 "           -k               = keep-alive crossfading for long skips\n"
 "           -l<n>            = left output override (for debug, n = 1-4:\n"
 "                            = 1=mono, 2=filtered, 3=level, 4=tensor)\n"
@@ -224,11 +225,13 @@ int main (int argc, char **argv)
     int music_hits = 0, talk_hits = 0, analysis_output_file_follows = 0, tensor_input_file_follows = 0;
     int stream_start_time_follows = 0, stream_time_utc_offset_follows = 0, time_restriction_window_follows = 0, time_restricted_skip_enabled = 0;
     int stream_time_enabled = 0, stream_time_utc_offset_minutes = 0, stream_time_utc_offset_is_set = 0;
+    int cpu_clock_schedule_enabled = 0;
     int fast_time_restricted_passthrough = 0;
     int current_mode = 0, music_up_counter = 0, talk_up_counter = 0, pend_up_counter = 0, input_samples;
     int64_t num_samples = 0, transition_sample = 0, confirmed_sample = 0, samples_discarded = 0, samples_written = 0;
     int64_t fast_passthrough_samples = 0;
     int64_t stream_start_epoch_ms = 0;
+    int64_t schedule_clock_start_ms = -1;
     char *analysis_output_filename = NULL, *tensor_input_filename = NULL;
     int16_t *input_buffer, *output_buffer, *crossfade_buffer;
     double full_scale_rms = 32768.0 * 32767.0 * 0.5;
@@ -285,6 +288,10 @@ int main (int argc, char **argv)
 
                     case 'D': case 'd':
                         tensor_input_file_follows = 1;
+                        break;
+
+                    case 'E': case 'e':
+                        cpu_clock_schedule_enabled = 1;
                         break;
 
                     case 'K': case 'k':
@@ -501,6 +508,11 @@ int main (int argc, char **argv)
         return 1;
     }
 
+    if (cpu_clock_schedule_enabled && !stream_time_enabled) {
+        fprintf (stderr, "\nerror: -e requires a stream start time supplied with -T\n");
+        return 1;
+    }
+
     if (tensor_input_filename ? !read_tensor_file (tensor, tensor_input_filename) : !local_tensor_file (tensor, tensor_4d, sizeof (tensor_4d))) {
         fprintf (stderr, "\nerror: no tensor file, exiting!\n");
         return 1;
@@ -560,6 +572,9 @@ int main (int argc, char **argv)
     biquad_apply_buffer (lowpass + 1, ring_buffer, ring_buff_len, 1);
 #endif
 
+    if (cpu_clock_schedule_enabled)
+        schedule_clock_start_ms = monotonic_clock_ms ();
+
     for (;;) {
         double read_start = profile_stats.enabled ? profile_now_seconds () : 0.0;
         input_samples = fread (input_buffer, sizeof (int16_t) * channels, sample_rate, stdin);
@@ -570,11 +585,21 @@ int main (int argc, char **argv)
 
         profile_stats.chunks++;
 
+        int64_t first_schedule_sample = num_samples;
+        int64_t last_schedule_sample = num_samples + input_samples - 1;
+
+        if (fast_time_restricted_passthrough && output_buffer_index == 0) {
+            int64_t clock_now_ms = cpu_clock_schedule_enabled ? monotonic_clock_ms () : -1;
+            first_schedule_sample = schedule_sample_index (cpu_clock_schedule_enabled,
+                schedule_clock_start_ms, clock_now_ms, num_samples, num_samples, sample_rate);
+            last_schedule_sample = first_schedule_sample + input_samples - 1;
+        }
+
         if (fast_time_restricted_passthrough && output_buffer_index == 0 &&
             !is_time_restricted_analysis_active (stream_time_enabled, stream_start_epoch_ms,
-                stream_time_utc_offset_minutes, num_samples, sample_rate, &time_restriction_window) &&
+                stream_time_utc_offset_minutes, first_schedule_sample, sample_rate, &time_restriction_window) &&
             !is_time_restricted_analysis_active (stream_time_enabled, stream_start_epoch_ms,
-                stream_time_utc_offset_minutes, num_samples + input_samples - 1, sample_rate, &time_restriction_window)) {
+                stream_time_utc_offset_minutes, last_schedule_sample, sample_rate, &time_restriction_window)) {
 
             double passthrough_start = profile_stats.enabled ? profile_now_seconds () : 0.0;
             write_passthrough_audio (input_buffer, input_samples, channels, output_buffer);
@@ -748,11 +773,13 @@ int main (int argc, char **argv)
                         if (skip_mode == SKIP_MUSIC || skip_mode == SKIP_TALK) {
                             int audio_offset = transition_sample - num_samples + output_buffer_index;
                             int crossfade_start = audio_offset - crossfade_buff_len / 2;
+                            int64_t schedule_transition_sample = schedule_sample_index (cpu_clock_schedule_enabled,
+                                schedule_clock_start_ms, monotonic_clock_ms (), num_samples, transition_sample, sample_rate);
                             int current_output_skipped = should_skip_mode_at_time (skip_mode, current_mode, time_restricted_skip_enabled,
-                                stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, transition_sample, sample_rate,
+                                stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, schedule_transition_sample, sample_rate,
                                 &time_restriction_window);
                             int detected_output_skipped = should_skip_mode_at_time (skip_mode, detected_mode, time_restricted_skip_enabled,
-                                stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, transition_sample, sample_rate,
+                                stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, schedule_transition_sample, sample_rate,
                                 &time_restriction_window);
 
                             if (current_output_skipped == detected_output_skipped) {
@@ -832,7 +859,8 @@ int main (int argc, char **argv)
 
                 int64_t available_start_sample = num_samples - output_buffer_index;
                 int current_mode_skipped = should_skip_mode_at_time (skip_mode, current_mode, time_restricted_skip_enabled,
-                    stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, available_start_sample, sample_rate,
+                    stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes,
+                    schedule_sample_index (cpu_clock_schedule_enabled, schedule_clock_start_ms, monotonic_clock_ms (), num_samples, available_start_sample, sample_rate), sample_rate,
                     &time_restriction_window);
 
                 if (keepalive && available_samples > crossfade_buff_len * 2 && current_mode_skipped) {
@@ -901,7 +929,8 @@ int main (int argc, char **argv)
     if (output_buffer_index) {
         int64_t output_start_sample = num_samples - output_buffer_index;
         int write_data = !should_skip_mode_at_time (skip_mode, current_mode, time_restricted_skip_enabled,
-            stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes, output_start_sample, sample_rate,
+            stream_time_enabled, stream_start_epoch_ms, stream_time_utc_offset_minutes,
+            schedule_sample_index (cpu_clock_schedule_enabled, schedule_clock_start_ms, monotonic_clock_ms (), num_samples, output_start_sample, sample_rate), sample_rate,
             &time_restriction_window);
 
         if (write_data) {

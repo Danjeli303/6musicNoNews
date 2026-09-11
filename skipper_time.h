@@ -42,6 +42,10 @@ int format_epoch_ms_with_utc_offset (int64_t epoch_ms, int utc_offset_minutes, c
 int is_leap_year (int year);
 int days_in_month (int year, int month);
 int64_t days_from_civil (int year, int month, int day);
+int64_t monotonic_clock_ms (void);
+int64_t schedule_sample_index (int cpu_clock_enabled, int64_t clock_start_ms,
+                               int64_t clock_now_ms, int64_t current_sample_index,
+                               int64_t target_sample_index, int sample_rate);
 int is_time_restricted_window_active_with_config (int stream_time_enabled, int64_t stream_start_epoch_ms,
                                                  int stream_time_utc_offset_minutes, int64_t sample_index,
                                                  int sample_rate, const TimeRestrictionWindow *window);

@@ -99,15 +99,18 @@ run_pipeline() {
         duration_args="-t $1"
     fi
 
+    # live_start_index 0 matches FFmpeg's first decoded segment to the first
+    # PROGRAM-DATE-TIME captured from the same media playlist.
     # shellcheck disable=SC2086
     ffmpeg \
       -hide_banner \
       -loglevel warning \
       $(ffmpeg_live_input_args) \
+      -live_start_index 0 \
       -i "$BBC_URL" \
       $duration_args \
       -f s16le -ar "$SAMPLE_RATE" -ac 2 pipe:1 2>>"$LOG" | \
-    "$SILENCER" -t -x -v20 -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" -w "$SILENCER_WINDOW" 2>>"$LOG" | \
+    "$SILENCER" -e -t -x -v20 -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" -w "$SILENCER_WINDOW" 2>>"$LOG" | \
     ffmpeg \
       -hide_banner \
       -loglevel warning \
