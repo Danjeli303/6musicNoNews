@@ -213,7 +213,8 @@ class DeploymentTests(unittest.TestCase):
     def test_compose_services_share_one_built_image(self):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertEqual(compose.count("image: six-music-skipper:local"), 2)
-        self.assertEqual(compose.count("target: skipper-runtime"), 1)
+        self.assertEqual(compose.count("pull_policy: build"), 2)
+        self.assertEqual(compose.count("target: skipper-runtime"), 2)
         self.assertNotIn("SKIP_NEWS_WEB_PORT", compose)
 
 

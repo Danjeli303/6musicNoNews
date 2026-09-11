@@ -1,6 +1,7 @@
 services:
   hls-streamer:
     image: six-music-skipper:local
+    pull_policy: build
     build:
       context: .
       target: skipper-runtime
@@ -25,6 +26,10 @@ services:
 
   news-skipper-web:
     image: six-music-skipper:local
+    pull_policy: build
+    build:
+      context: .
+      target: skipper-runtime
     command: ["python3", "./skip_news_web.py", "--host", "0.0.0.0", "--port", "8080", "--output-dir", "/srv/downloads"]
     restart: unless-stopped
     expose:
