@@ -604,18 +604,19 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 .artwork-play {
   position: absolute;
   inset: 50% auto auto 50%;
-  width: 58px;
-  height: 58px;
+  width: 64px;
+  height: 64px;
   min-height: 0;
   display: grid;
   place-items: center;
-  padding: 0 0 0 4px;
+  padding: 0 0 2px 3px;
   border: 2px solid #fff;
   border-radius: 50%;
   color: #fff;
   background: rgba(0, 0, 0, 0.84);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  font-size: 1.35rem;
+  font-size: 2rem;
+  line-height: 1;
   transform: translate(-50%, -50%);
 }
 
@@ -626,7 +627,12 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 }
 
 .artwork-play:active { transform: translate(-50%, -50%) scale(0.98); }
-.artwork-play.is-playing { padding-left: 0; color: #111; background: var(--sounds-light); }
+.artwork-play.is-playing {
+  padding: 0 0 2px;
+  color: #111;
+  background: var(--sounds-light);
+  font-size: 1.85rem;
+}
 
 .programme-details { min-width: 0; }
 
