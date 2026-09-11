@@ -1,10 +1,15 @@
 # AWS EC2 Docker Deployment
 
-This deployment runs two containers on one EC2 instance:
+This deployment runs three containers on one EC2 instance:
 
 - `hls-streamer`: writes a rolling AAC/HLS playlist and segments
-- `caddy`: exposes `https://PUBLIC_HOST/hls/radio6music_noNews.m3u8`
-  on ports `80` and `443`
+- `news-skipper-web`: downloads BBC Sounds programmes, removes scheduled news,
+  and provides progress and finished-file downloads
+- `caddy`: exposes both the web interface and
+  `https://PUBLIC_HOST/hls/radio6music_noNews.m3u8` on ports `80` and `443`
+
+The HLS and news-skipper containers use the same locally built
+`six-music-skipper:local` Docker image.
 
 Alexa needs an HTTPS stream URL on port `443` with a trusted certificate. For
 first testing, use `sslip.io` DNS:
@@ -106,7 +111,13 @@ docker compose up -d --build
 Watch startup:
 
 ```
-docker compose logs -f hls-streamer caddy
+docker compose logs -f hls-streamer news-skipper-web caddy
+```
+
+The public news-skipper page is:
+
+```
+https://PUBLIC_HOST/
 ```
 
 The public stream URL is:
@@ -135,6 +146,7 @@ the existing HLS window at startup.
 From your laptop or the EC2 instance:
 
 ```
+curl -I https://PUBLIC_HOST/
 curl -I https://PUBLIC_HOST/hls/radio6music_noNews.m3u8
 ```
 
@@ -222,6 +234,9 @@ Cost cleanup:
 - `PUBLIC_HOST` must point at the EC2 public IP. With `sslip.io`, use the form
   `203.0.113.10.sslip.io`.
 - Ports `80` and `443` must be open to the internet for Caddy certificate
-  issuance and Alexa playback.
+  issuance, the news-skipper page, and Alexa playback. Port `8080` remains
+  private inside the Compose network.
 - If the stream is silent, inspect `docker compose logs hls-streamer`.
+- If the news-skipper page or a job fails, inspect
+  `docker compose logs news-skipper-web`.
 - If HTTPS fails, inspect `docker compose logs caddy`.

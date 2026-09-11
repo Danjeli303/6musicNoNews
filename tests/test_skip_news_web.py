@@ -204,5 +204,18 @@ printf 'STAGE=complete\\n'
         path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+class DeploymentTests(unittest.TestCase):
+    def test_caddy_routes_hls_and_web_on_the_same_host(self):
+        caddyfile = (ROOT / "docker/caddy/Caddyfile").read_text(encoding="utf-8")
+        self.assertIn("handle_path /hls/*", caddyfile)
+        self.assertIn("reverse_proxy news-skipper-web:8080", caddyfile)
+
+    def test_compose_services_share_one_built_image(self):
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertEqual(compose.count("image: six-music-skipper:local"), 2)
+        self.assertEqual(compose.count("target: skipper-runtime"), 1)
+        self.assertNotIn("SKIP_NEWS_WEB_PORT", compose)
+
+
 if __name__ == "__main__":
     unittest.main()

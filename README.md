@@ -97,17 +97,20 @@ contains it.
 
 ### Web interface with live progress
 
-Build and start the self-contained web service with Docker Compose:
+Build and start the complete HLS and news-skipper stack with Docker Compose:
 
 ```sh
-docker compose up --build news-skipper-web
+docker compose up -d --build
 ```
 
-Open <http://127.0.0.1:8080>, paste a BBC Sounds `/sounds/play/` link, and start
-the job. The page reports download and news-removal progress, then displays a
-download button for the completed audio file. Results persist in the
-`skipper_downloads` Docker volume. Set `SKIP_NEWS_WEB_PORT` or
-`SKIP_NEWS_WEB_BIND` in `.env` to change the host port or bind address.
+Open `https://PUBLIC_HOST/`, paste a BBC Sounds `/sounds/play/` link, and start
+the job. Caddy serves the page on the same hostname and HTTPS ports as the HLS
+stream, which remains at
+`https://PUBLIC_HOST/hls/radio6music_noNews.m3u8`. The page reports download and
+news-removal progress, then displays a download button for the completed audio
+file. Results persist in the `skipper_downloads` Docker volume. Both the HLS
+worker and web worker run from the same `six-music-skipper:local` image built by
+Compose.
 
 For host-only use without Docker:
 

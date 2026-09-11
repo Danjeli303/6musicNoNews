@@ -32,13 +32,7 @@ COPY news_schedule.ini ./
 COPY --from=build /app/silencer ./silencer
 COPY --from=build /app/skipper ./skipper
 
-FROM audio-runtime AS hls-streamer
-
-RUN chmod +x ./radio6music_noNews_hls.sh
-
-CMD ["./radio6music_noNews_hls.sh"]
-
-FROM audio-runtime AS news-skipper-web
+FROM audio-runtime AS skipper-runtime
 
 ARG GET_IPLAYER_VERSION=v3.36
 
@@ -63,12 +57,13 @@ RUN apt-get update \
 COPY get_iplayer_skip_news.sh skip_news_web.py ./
 COPY web ./web
 
-RUN chmod +x ./get_iplayer_skip_news.sh ./skip_6music_news.sh ./skip_news_web.py \
+RUN chmod +x \
+        ./get_iplayer_skip_news.sh \
+        ./radio6music_noNews_hls.sh \
+        ./skip_6music_news.sh \
+        ./skip_news_web.py \
     && mkdir -p /srv/downloads
 
 EXPOSE 8080
 
-CMD ["python3", "./skip_news_web.py", "--host", "0.0.0.0", "--port", "8080", "--output-dir", "/srv/downloads"]
-
-# Preserve the original HLS image as the default for direct `docker build` use.
-FROM hls-streamer AS default
+CMD ["./radio6music_noNews_hls.sh"]
