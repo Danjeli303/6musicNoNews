@@ -15,6 +15,7 @@ import uuid
 from collections import deque
 from datetime import datetime, timezone
 from http import HTTPStatus
+from http.client import HTTPException
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
@@ -58,6 +59,8 @@ BBC_NOW_PLAYING_URL = (
 )
 BBC_IMAGE_HOST = "ichef.bbci.co.uk"
 DEFAULT_NOW_PLAYING_DELAY_SECONDS = 18
+MAX_ACTIVE_JOBS = 5
+NOW_PLAYING_FETCH_ERRORS = (OSError, HTTPException, UnicodeError, ValueError)
 
 
 class ActiveJobError(RuntimeError):
@@ -105,30 +108,22 @@ def bbc_now_playing_from_payload(payload):
         return {
             "available": False,
             "now_playing": False,
-            "station": "BBC Radio 6 Music",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
 
     titles = item.get("titles") if isinstance(item.get("titles"), dict) else {}
-    offset = item.get("offset") if isinstance(item.get("offset"), dict) else {}
     artist = _clean_text(titles.get("primary"))
     title = _clean_text(titles.get("secondary"))
     if not artist and not title:
         return {
             "available": False,
             "now_playing": False,
-            "station": "BBC Radio 6 Music",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
     return {
         "available": True,
         "now_playing": current is not None,
-        "station": "BBC Radio 6 Music",
         "artist": artist,
         "title": title,
         "image_url": _bbc_image_url(item.get("image_url")),
-        "label": _clean_text(offset.get("label"), limit=80),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -160,11 +155,10 @@ class BBCNowPlayingService:
                 if len(raw) > 1_000_000:
                     raise ValueError("The BBC metadata response was too large.")
                 result = bbc_now_playing_from_payload(json.loads(raw.decode("utf-8")))
-            except Exception:
+            except NOW_PLAYING_FETCH_ERRORS:
                 if self.cached is not None:
-                    stale = dict(self.cached)
-                    stale["stale"] = True
-                    return stale
+                    self.cached_at = now
+                    return dict(self.cached)
                 raise
             self.cached = result
             self.cached_at = now
@@ -429,6 +423,12 @@ class JobStore:
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         with self.lock:
+            active_count = sum(
+                item["status"] in {"queued", "running"}
+                for item in self.jobs.values()
+            )
+            if active_count >= MAX_ACTIVE_JOBS:
+                raise ValueError("Too many programmes are queued. Try again later.")
             self.jobs[job_id] = job
         threading.Thread(target=self._run, args=(job_id,), daemon=True).start()
         return self.snapshot(job_id)
@@ -589,7 +589,7 @@ class JobStore:
                     stage_progress=100,
                     message="Your news-skipped programme is ready.",
                 )
-            except Exception as exc:  # Surface failures to the polling client.
+            except Exception as exc:
                 self._append_log(job_id, str(exc))
                 self._update(
                     job_id,
@@ -768,7 +768,7 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
         elif path == "/api/now-playing":
             try:
                 payload = self.server.now_playing_service.get()
-            except Exception:
+            except NOW_PLAYING_FETCH_ERRORS:
                 self._send_json(
                     HTTPStatus.BAD_GATEWAY,
                     {"error": "BBC 6 Music track information is unavailable."},
@@ -807,6 +807,8 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
             return
         try:
             data = json.loads(self.rfile.read(length).decode("utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("Invalid request.")
             sounds_url = data.get("url", "")
             if not isinstance(sounds_url, str):
                 raise ValueError("Invalid URL.")

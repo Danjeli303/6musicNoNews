@@ -308,6 +308,17 @@ class JobStoreTests(unittest.TestCase):
             with self.assertRaises(skip_news_web.ActiveJobError):
                 store.remove("active")
 
+    def test_rejects_jobs_when_the_queue_is_full(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            store = skip_news_web.JobStore(ROOT / "get_iplayer_skip_news.sh", output_dir)
+            store.jobs = {
+                str(index): {"status": "queued"}
+                for index in range(skip_news_web.MAX_ACTIVE_JOBS)
+            }
+
+            with self.assertRaisesRegex(ValueError, "Too many programmes"):
+                store.create("https://www.bbc.co.uk/sounds/play/m0030yw7")
+
     def test_completed_job_exposes_download_url(self):
         with tempfile.TemporaryDirectory() as temp_root:
             root = Path(temp_root)

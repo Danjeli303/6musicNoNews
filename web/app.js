@@ -36,7 +36,7 @@ let nowPlayingSignature = "";
 let nowPlayingRequestInFlight = false;
 let nowPlayingQueueTimer;
 let nowPlayingHasTrack = false;
-const nowPlayingQueue = [];
+let pendingNowPlayingSignature = "";
 const historyPlayers = new Map();
 
 function showNowPlayingFallback() {
@@ -71,9 +71,11 @@ function renderNowPlaying(track) {
   }
 
   nowPlayingHasTrack = true;
-  nowPlayingLabel.textContent = track.now_playing ? "Now playing" : "Recently played";
+  nowPlayingLabel.textContent = track.now_playing
+    ? "Now playing"
+    : "Recently played";
   nowPlayingTitle.textContent = track.title || "Title unavailable";
-  nowPlayingArtist.textContent = track.artist || track.station || "BBC Radio 6 Music";
+  nowPlayingArtist.textContent = track.artist || "BBC Radio 6 Music";
   if (track.image_url) {
     nowPlayingImage.onload = () => {
       nowPlayingImage.hidden = false;
@@ -87,21 +89,6 @@ function renderNowPlaying(track) {
   }
 }
 
-function armNowPlayingQueue() {
-  clearTimeout(nowPlayingQueueTimer);
-  if (!nowPlayingQueue.length) return;
-  const wait = Math.max(0, nowPlayingQueue[0].dueAt - Date.now());
-  nowPlayingQueueTimer = setTimeout(() => {
-    let latest;
-    const now = Date.now();
-    while (nowPlayingQueue.length && nowPlayingQueue[0].dueAt <= now) {
-      latest = nowPlayingQueue.shift().track;
-    }
-    if (latest) renderNowPlaying(latest);
-    armNowPlayingQueue();
-  }, wait);
-}
-
 function queueNowPlaying(track) {
   if (!track.available) {
     if (!nowPlayingHasTrack) renderNowPlaying(track);
@@ -113,10 +100,12 @@ function queueNowPlaying(track) {
     renderNowPlaying(track);
     return;
   }
-  if (
-    signature === nowPlayingSignature ||
-    nowPlayingQueue.some((queued) => queued.signature === signature)
-  ) {
+  if (signature === nowPlayingSignature) {
+    clearTimeout(nowPlayingQueueTimer);
+    pendingNowPlayingSignature = "";
+    return;
+  }
+  if (signature === pendingNowPlayingSignature) {
     return;
   }
 
@@ -124,12 +113,12 @@ function queueNowPlaying(track) {
   const delaySeconds = Number.isFinite(configuredDelay)
     ? Math.max(0, Math.min(120, configuredDelay))
     : 18;
-  nowPlayingQueue.push({
-    dueAt: Date.now() + delaySeconds * 1000,
-    signature,
-    track,
-  });
-  armNowPlayingQueue();
+  clearTimeout(nowPlayingQueueTimer);
+  pendingNowPlayingSignature = signature;
+  nowPlayingQueueTimer = setTimeout(() => {
+    pendingNowPlayingSignature = "";
+    renderNowPlaying(track);
+  }, delaySeconds * 1000);
 }
 
 async function loadNowPlaying() {
@@ -472,7 +461,7 @@ async function loadJobs() {
     renderLibrary(await readResponse(response));
     libraryMessage.textContent = "";
   } catch (error) {
-    libraryMessage.textContent = `Could not refresh activity: ${error.message}`;
+    libraryMessage.textContent = `Could not refresh programmes: ${error.message}`;
   } finally {
     libraryRequestInFlight = false;
     refreshButton.disabled = false;

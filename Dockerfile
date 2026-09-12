@@ -44,7 +44,6 @@ RUN apt-get update \
         libmojolicious-perl \
         libwww-perl \
         libxml-libxml-perl \
-        make \
         perl \
         python3 \
     && curl -fsSL \

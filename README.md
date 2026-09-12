@@ -103,27 +103,18 @@ Build and start the complete HLS and news-skipper stack with Docker Compose:
 docker compose up -d --build
 ```
 
-Open `https://PUBLIC_HOST/`, paste a BBC Sounds `/sounds/play/` link, and start
-the job. Caddy serves the page on the same hostname and HTTPS ports as the HLS
-stream, which remains at
-`https://PUBLIC_HOST/hls/radio6music_noNews.m3u8`. The page includes a bundled
-[Video.js 8.24.1](https://github.com/videojs/video.js) player for this live HLS
-stream. The live panel shows the current artist, track and BBC artwork using
-BBC Radio 6 Music's Radio Metadata Service. Track changes are sampled every 5
-seconds and displayed after the stream's default 18-second processing delay. It
-reports download and news-removal progress, then displays a download
-button for the completed audio file. The activity section shows queued and
-running processes with live status, alongside previously processed programmes
-with their embedded title, artist, album, description and cover art. Completed
-programmes can be played with Video.js, downloaded again, or removed from the
-server. Playback never starts automatically and starting any player stops all
-other live or recorded audio. Results persist in the `skipper_downloads` Docker
-volume and reappear after a container restart. Removing an item deletes its
-audio, processing log and extracted artwork. Both the HLS worker and web worker
-run from the same `six-music-skipper:local` image built by Compose.
-Set `BBC_NOW_PLAYING_URL` only if you need to override the web service's default
-BBC 6 Music metadata endpoint. Set `BBC_NOW_PLAYING_DELAY_SECONDS` to tune the
-metadata-to-audio synchronisation for a deployment.
+Open `https://PUBLIC_HOST/`. The page provides:
+
+- the news-skipped live stream with BBC track metadata
+- BBC Sounds programme processing with progress
+- playback, download, and removal of completed programmes
+
+Playback does not start automatically and only one player can play at a time.
+Completed files persist in the `skipper_downloads` volume. The HLS stream is
+also available at `https://PUBLIC_HOST/hls/radio6music_noNews.m3u8`.
+
+Set `BBC_NOW_PLAYING_URL` to override the BBC metadata endpoint or
+`BBC_NOW_PLAYING_DELAY_SECONDS` to adjust the default 18-second display delay.
 
 For host-only use without Docker:
 
