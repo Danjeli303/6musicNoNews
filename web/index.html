@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#000000" />
+    <title>6 Music News Skipper</title>
+    <meta
+      name="description"
+      content="Listen to BBC 6 Music without scheduled news and process BBC Sounds programmes."
+    />
+    <link rel="stylesheet" href="/vendor/video.js/video-js.min.css" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="utility-bar">
+        <div class="utility-inner">
+          <a class="block-logo" href="/" aria-label="6 Music News Skipper home">
+            <b>6</b><b>M</b><b>N</b>
+          </a>
+          <span class="utility-name">6 Music News Skipper</span>
+          <span class="unofficial">Unofficial utility</span>
+        </div>
+      </div>
+      <div class="sounds-bar">
+        <div class="sounds-inner">
+          <a class="sounds-logo" href="/">
+            <span class="sound-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+            <strong>SOUNDS SKIPPER</strong>
+          </a>
+          <nav aria-label="Primary navigation">
+            <a class="active" href="#live-stream" aria-current="page">Live Stream</a>
+            <a href="#process">Process</a>
+            <a href="#programmes">Programmes</a>
+          </nav>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="content-shell">
+        <section id="live-stream" class="live-section" aria-labelledby="live-title">
+          <div class="live-copy">
+            <div class="on-air"><i aria-hidden="true"></i> Live now</div>
+            <h1 id="live-title">Live Stream</h1>
+            <p>BBC Radio 6 Music without scheduled news.</p>
+          </div>
+          <div class="live-player-panel">
+            <div class="station-mark" aria-hidden="true">
+              <span>6</span>
+              <b>MUSIC</b>
+            </div>
+            <div class="player-area">
+              <div id="now-playing" class="now-playing" aria-live="polite" aria-atomic="true">
+                <div class="now-playing-artwork">
+                  <img id="now-playing-image" alt="" hidden />
+                  <span id="now-playing-image-fallback" aria-hidden="true">6</span>
+                </div>
+                <div class="now-playing-copy">
+                  <p id="now-playing-label">Now playing</p>
+                  <strong id="now-playing-title">Finding the current track…</strong>
+                  <span id="now-playing-artist">BBC Radio 6 Music</span>
+                </div>
+              </div>
+              <audio
+                id="live-radio-player"
+                class="video-js"
+                controls
+                preload="none"
+                playsinline
+              >
+                <source
+                  src="/hls/radio6music_noNews.m3u8"
+                  type="application/x-mpegURL"
+                />
+                Your browser cannot play this stream.
+              </audio>
+              <p id="radio-status" class="radio-status" aria-live="polite">
+                Ready to play.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section id="process" class="process-section" aria-labelledby="process-title">
+          <div class="process-heading">
+            <h2 id="process-title">Process</h2>
+            <p>Paste a BBC Sounds programme link to remove scheduled news.</p>
+          </div>
+          <form id="programme-form" novalidate>
+            <label for="sounds-url">BBC Sounds link</label>
+            <div class="input-row">
+              <input
+                id="sounds-url"
+                name="url"
+                type="url"
+                inputmode="url"
+                autocomplete="url"
+                placeholder="https://www.bbc.co.uk/sounds/play/m0030yw7"
+                required
+              />
+              <button type="submit" id="submit-button">
+                <span>Process</span>
+                <span aria-hidden="true">›</span>
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section id="job-card" class="job-card" aria-live="polite" hidden>
+          <div class="job-heading">
+            <div>
+              <p id="job-kicker" class="eyebrow">In progress</p>
+              <h2 id="job-stage">Preparing</h2>
+            </div>
+            <span id="progress-number" class="progress-number">0%</span>
+          </div>
+
+          <div
+            id="progress-track"
+            class="progress-track"
+            role="progressbar"
+            aria-label="Programme progress"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+          >
+            <span id="progress-bar"></span>
+          </div>
+          <p id="job-message" class="job-message">Starting…</p>
+
+          <details id="activity-panel">
+            <summary>Processing details</summary>
+            <pre id="job-logs"></pre>
+          </details>
+
+          <a id="download-button" class="download-button" href="#" download hidden>
+            <span>Download news-skipped file</span>
+            <span aria-hidden="true">↓</span>
+          </a>
+        </section>
+
+        <section id="programmes" class="activity-section" aria-labelledby="programmes-title">
+          <div class="activity-heading">
+            <h2 id="programmes-title">Programmes</h2>
+            <button id="refresh-jobs" class="quiet-button" type="button">Refresh</button>
+          </div>
+
+          <div class="activity-group" aria-labelledby="current-title">
+            <div class="group-heading">
+              <h3 id="current-title">Processing</h3>
+              <span id="active-count" class="count-badge">0</span>
+            </div>
+            <div id="active-jobs" class="process-list"></div>
+            <p id="active-empty" class="empty-state">Nothing is processing.</p>
+          </div>
+
+          <div class="activity-group" aria-labelledby="history-title">
+            <div class="group-heading">
+              <h3 id="history-title">Processed</h3>
+              <span id="history-count" class="count-badge">0</span>
+            </div>
+            <div id="history-jobs" class="process-list"></div>
+            <p id="history-empty" class="empty-state">No processed programmes yet.</p>
+          </div>
+          <p id="library-message" class="library-message" aria-live="polite"></p>
+        </section>
+
+      </div>
+    </main>
+    <script src="/vendor/video.js/video.min.js" defer></script>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

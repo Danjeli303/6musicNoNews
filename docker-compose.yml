@@ -1,7 +1,10 @@
 services:
   hls-streamer:
+    image: six-music-skipper:local
+    pull_policy: build
     build:
       context: .
+      target: skipper-runtime
     command: ["./radio6music_noNews_hls.sh"]
     restart: unless-stopped
     environment:
@@ -21,14 +24,34 @@ services:
     volumes:
       - hls_data:/srv/hls
 
+  news-skipper-web:
+    image: six-music-skipper:local
+    pull_policy: build
+    build:
+      context: .
+      target: skipper-runtime
+    command: ["python3", "./skip_news_web.py", "--host", "0.0.0.0", "--port", "8080", "--output-dir", "/srv/downloads"]
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      TZ: ${TZ:-Europe/London}
+      SKIP_NEWS_OUTPUT_DIR: /srv/downloads
+      BBC_NOW_PLAYING_URL: ${BBC_NOW_PLAYING_URL:-https://rms.api.bbc.co.uk/v2/services/bbc_6music/segments/latest?experience=domestic&offset=0&limit=4}
+      BBC_NOW_PLAYING_DELAY_SECONDS: ${BBC_NOW_PLAYING_DELAY_SECONDS:-18}
+    volumes:
+      - skipper_downloads:/srv/downloads
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    depends_on:
+      - news-skipper-web
     ports:
       - "80:80"
       - "443:443"
     environment:
-      PUBLIC_HOST: ${PUBLIC_HOST:?Set PUBLIC_HOST in .env}
+      PUBLIC_HOST: ${PUBLIC_HOST:-localhost}
     volumes:
       - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - hls_data:/srv/hls:ro
@@ -37,5 +60,6 @@ services:
 
 volumes:
   hls_data:
+  skipper_downloads:
   caddy_data:
   caddy_config:
