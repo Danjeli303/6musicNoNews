@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 import uuid
 from collections import deque
 from datetime import datetime, timezone
@@ -17,6 +18,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
+from urllib.request import Request, urlopen
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -50,10 +52,122 @@ MEDIA_CONTENT_TYPES = {
     ".opus": "audio/ogg",
     ".wav": "audio/wav",
 }
+BBC_NOW_PLAYING_URL = (
+    "https://rms.api.bbc.co.uk/v2/services/bbc_6music/segments/latest"
+    "?experience=domestic&offset=0&limit=4"
+)
+BBC_IMAGE_HOST = "ichef.bbci.co.uk"
 
 
 class ActiveJobError(RuntimeError):
     """Raised when deletion is requested for a job that is still processing."""
+
+
+def _clean_text(value, limit=200):
+    if not isinstance(value, str):
+        return None
+    clean = " ".join(value.split())
+    return clean[:limit] if clean else None
+
+
+def _bbc_image_url(value):
+    value = _clean_text(value, limit=1000)
+    if not value:
+        return None
+    parsed = urlsplit(value)
+    if parsed.scheme != "https" or parsed.hostname != BBC_IMAGE_HOST:
+        return None
+    return value.replace("{recipe}", "640x640")
+
+
+def bbc_now_playing_from_payload(payload):
+    """Normalize the BBC Radio Metadata Service's latest music segment."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        raise ValueError("The BBC metadata response was invalid.")
+
+    tracks = [
+        item
+        for item in payload["data"]
+        if isinstance(item, dict) and item.get("segment_type") == "music"
+    ]
+    current = next(
+        (
+            item
+            for item in tracks
+            if isinstance(item.get("offset"), dict)
+            and item["offset"].get("now_playing") is True
+        ),
+        None,
+    )
+    item = current or (tracks[0] if tracks else None)
+    if item is None:
+        return {
+            "available": False,
+            "now_playing": False,
+            "station": "BBC Radio 6 Music",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    titles = item.get("titles") if isinstance(item.get("titles"), dict) else {}
+    offset = item.get("offset") if isinstance(item.get("offset"), dict) else {}
+    artist = _clean_text(titles.get("primary"))
+    title = _clean_text(titles.get("secondary"))
+    if not artist and not title:
+        return {
+            "available": False,
+            "now_playing": False,
+            "station": "BBC Radio 6 Music",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    return {
+        "available": True,
+        "now_playing": current is not None,
+        "station": "BBC Radio 6 Music",
+        "artist": artist,
+        "title": title,
+        "image_url": _bbc_image_url(item.get("image_url")),
+        "label": _clean_text(offset.get("label"), limit=80),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+class BBCNowPlayingService:
+    """Fetch and briefly cache BBC 6 Music track metadata."""
+
+    def __init__(self, endpoint=BBC_NOW_PLAYING_URL, cache_seconds=15):
+        self.endpoint = endpoint
+        self.cache_seconds = cache_seconds
+        self.lock = threading.Lock()
+        self.cached = None
+        self.cached_at = 0.0
+
+    def get(self):
+        with self.lock:
+            now = time.monotonic()
+            if self.cached is not None and now - self.cached_at < self.cache_seconds:
+                return dict(self.cached)
+            request = Request(
+                self.endpoint,
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "6MusicNewsSkipper/1.0",
+                },
+            )
+            try:
+                with urlopen(request, timeout=5) as response:
+                    raw = response.read(1_000_001)
+                if len(raw) > 1_000_000:
+                    raise ValueError("The BBC metadata response was too large.")
+                result = bbc_now_playing_from_payload(json.loads(raw.decode("utf-8")))
+            except Exception:
+                if self.cached is not None:
+                    stale = dict(self.cached)
+                    stale["stale"] = True
+                    return stale
+                raise
+            self.cached = result
+            self.cached_at = now
+            return dict(result)
 
 
 def parse_bbc_sounds_url(value):
@@ -489,7 +603,8 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
+            "img-src 'self' data: https://ichef.bbci.co.uk; "
+            "font-src 'self' data:; connect-src 'self'; "
             "media-src 'self' blob:; worker-src 'self' blob:; base-uri 'none'; "
             "form-action 'self'; frame-ancestors 'none'",
         )
@@ -640,6 +755,16 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
             self._send_static(path.lstrip("/"))
         elif path == "/api/jobs":
             self._send_json(HTTPStatus.OK, self.server.job_store.list_jobs())
+        elif path == "/api/now-playing":
+            try:
+                payload = self.server.now_playing_service.get()
+            except Exception:
+                self._send_json(
+                    HTTPStatus.BAD_GATEWAY,
+                    {"error": "BBC 6 Music track information is unavailable."},
+                )
+            else:
+                self._send_json(HTTPStatus.OK, payload)
         elif path.startswith("/api/jobs/"):
             job_id = path.rsplit("/", 1)[-1]
             job = self.server.job_store.snapshot(job_id)
@@ -710,6 +835,9 @@ class SkipNewsServer(ThreadingHTTPServer):
     def __init__(self, address, job_store):
         super().__init__(address, SkipNewsHandler)
         self.job_store = job_store
+        self.now_playing_service = BBCNowPlayingService(
+            os.environ.get("BBC_NOW_PLAYING_URL", BBC_NOW_PLAYING_URL)
+        )
 
 
 def build_parser():

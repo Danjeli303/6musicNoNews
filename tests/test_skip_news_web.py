@@ -98,6 +98,55 @@ class MediaMetadataTests(unittest.TestCase):
         self.assertEqual(details["display_title"], "BBC Sounds programme m0030yw7")
 
 
+class NowPlayingTests(unittest.TestCase):
+    def test_normalizes_current_bbc_6_music_track(self):
+        result = skip_news_web.bbc_now_playing_from_payload(
+            {
+                "data": [
+                    {
+                        "segment_type": "music",
+                        "titles": {
+                            "primary": "Factory Floor",
+                            "secondary": "Upper Left",
+                        },
+                        "image_url": (
+                            "https://ichef.bbci.co.uk/images/ic/"
+                            "{recipe}/p01br4y8.jpg"
+                        ),
+                        "offset": {"label": "Now Playing", "now_playing": True},
+                    }
+                ]
+            }
+        )
+
+        self.assertTrue(result["available"])
+        self.assertTrue(result["now_playing"])
+        self.assertEqual(result["artist"], "Factory Floor")
+        self.assertEqual(result["title"], "Upper Left")
+        self.assertEqual(
+            result["image_url"],
+            "https://ichef.bbci.co.uk/images/ic/640x640/p01br4y8.jpg",
+        )
+
+    def test_labels_latest_track_as_recent_when_nothing_is_current(self):
+        result = skip_news_web.bbc_now_playing_from_payload(
+            {
+                "data": [
+                    {
+                        "segment_type": "music",
+                        "titles": {"primary": "Artist", "secondary": "Track"},
+                        "image_url": "https://example.com/untrusted.jpg",
+                        "offset": {"label": "2 Minutes Ago", "now_playing": False},
+                    }
+                ]
+            }
+        )
+
+        self.assertTrue(result["available"])
+        self.assertFalse(result["now_playing"])
+        self.assertIsNone(result["image_url"])
+
+
 class WrapperTests(unittest.TestCase):
     @staticmethod
     def _write_executable(path, body):
@@ -317,6 +366,9 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn("enforceExclusivePlayback", app)
         self.assertIn("autoplay: false", app)
         self.assertNotIn("<audio autoplay", html)
+        self.assertIn('id="now-playing-title"', html)
+        self.assertIn('fetch("/api/now-playing"', app)
+        self.assertIn("setInterval(loadNowPlaying, 20000)", app)
         self.assertGreater((vendor_dir / "video.min.js").stat().st_size, 100_000)
         self.assertTrue((vendor_dir / "video-js.min.css").is_file())
         self.assertTrue((vendor_dir / "LICENSE").is_file())

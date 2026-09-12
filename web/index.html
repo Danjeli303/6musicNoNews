@@ -139,6 +139,17 @@
               <b>MUSIC</b>
             </div>
             <div class="player-area">
+              <div id="now-playing" class="now-playing" aria-live="polite" aria-atomic="true">
+                <div class="now-playing-artwork">
+                  <img id="now-playing-image" alt="" hidden />
+                  <span id="now-playing-image-fallback" aria-hidden="true">6</span>
+                </div>
+                <div class="now-playing-copy">
+                  <p id="now-playing-label">Now playing</p>
+                  <strong id="now-playing-title">Finding the current track…</strong>
+                  <span id="now-playing-artist">BBC Radio 6 Music</span>
+                </div>
+              </div>
               <p class="stream-label">6 Music · News Skipped</p>
               <audio
                 id="live-radio-player"

@@ -37,6 +37,7 @@ services:
     environment:
       TZ: ${TZ:-Europe/London}
       SKIP_NEWS_OUTPUT_DIR: /srv/downloads
+      BBC_NOW_PLAYING_URL: ${BBC_NOW_PLAYING_URL:-https://rms.api.bbc.co.uk/v2/services/bbc_6music/segments/latest?experience=domestic&offset=0&limit=4}
     volumes:
       - skipper_downloads:/srv/downloads
 

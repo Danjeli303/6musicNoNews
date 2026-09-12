@@ -19,13 +19,78 @@ const historyEmpty = document.querySelector("#history-empty");
 const libraryMessage = document.querySelector("#library-message");
 const refreshButton = document.querySelector("#refresh-jobs");
 const radioStatus = document.querySelector("#radio-status");
+const nowPlayingLabel = document.querySelector("#now-playing-label");
+const nowPlayingTitle = document.querySelector("#now-playing-title");
+const nowPlayingArtist = document.querySelector("#now-playing-artist");
+const nowPlayingImage = document.querySelector("#now-playing-image");
+const nowPlayingImageFallback = document.querySelector(
+  "#now-playing-image-fallback",
+);
 
 let pollTimer;
 let displayedJobId;
 let libraryRequestInFlight = false;
 let radioPlayer;
 let historySignature = "";
+let nowPlayingSignature = "";
+let nowPlayingRequestInFlight = false;
 const historyPlayers = new Map();
+
+function showNowPlayingFallback() {
+  nowPlayingImage.hidden = true;
+  nowPlayingImage.removeAttribute("src");
+  nowPlayingImage.alt = "";
+  nowPlayingImageFallback.hidden = false;
+}
+
+function renderNowPlaying(track) {
+  const signature = JSON.stringify([
+    track.available,
+    track.now_playing,
+    track.artist,
+    track.title,
+    track.image_url,
+    track.stale,
+  ]);
+  if (signature === nowPlayingSignature) return;
+  nowPlayingSignature = signature;
+
+  if (!track.available) {
+    nowPlayingLabel.textContent = "Now playing";
+    nowPlayingTitle.textContent = "Track information unavailable";
+    nowPlayingArtist.textContent = "BBC Radio 6 Music";
+    showNowPlayingFallback();
+    return;
+  }
+
+  nowPlayingLabel.textContent = track.now_playing ? "Now playing" : "Recently played";
+  nowPlayingTitle.textContent = track.title || "Title unavailable";
+  nowPlayingArtist.textContent = track.artist || track.station || "BBC Radio 6 Music";
+  if (track.image_url) {
+    nowPlayingImage.onload = () => {
+      nowPlayingImage.hidden = false;
+      nowPlayingImageFallback.hidden = true;
+    };
+    nowPlayingImage.onerror = showNowPlayingFallback;
+    nowPlayingImage.alt = `Artwork for ${nowPlayingArtist.textContent} – ${nowPlayingTitle.textContent}`;
+    nowPlayingImage.src = track.image_url;
+  } else {
+    showNowPlayingFallback();
+  }
+}
+
+async function loadNowPlaying() {
+  if (nowPlayingRequestInFlight) return;
+  nowPlayingRequestInFlight = true;
+  try {
+    const response = await fetch("/api/now-playing", { cache: "no-store" });
+    renderNowPlaying(await readResponse(response));
+  } catch (_error) {
+    renderNowPlaying({ available: false });
+  } finally {
+    nowPlayingRequestInFlight = false;
+  }
+}
 
 function stopHistoryPlayer(entry) {
   if (!entry) return;
@@ -479,5 +544,7 @@ historyJobs.addEventListener("click", async (event) => {
 });
 
 initialiseRadioPlayer();
+loadNowPlaying();
 loadJobs();
+setInterval(loadNowPlaying, 20000);
 setInterval(loadJobs, 2000);
