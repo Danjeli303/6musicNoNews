@@ -34,6 +34,9 @@ let radioPlayer;
 let historySignature = "";
 let nowPlayingSignature = "";
 let nowPlayingRequestInFlight = false;
+let nowPlayingQueueTimer;
+let nowPlayingHasTrack = false;
+const nowPlayingQueue = [];
 const historyPlayers = new Map();
 
 function showNowPlayingFallback() {
@@ -43,19 +46,23 @@ function showNowPlayingFallback() {
   nowPlayingImageFallback.hidden = false;
 }
 
-function renderNowPlaying(track) {
-  const signature = JSON.stringify([
+function nowPlayingTrackSignature(track) {
+  return JSON.stringify([
     track.available,
     track.now_playing,
     track.artist,
     track.title,
     track.image_url,
-    track.stale,
   ]);
+}
+
+function renderNowPlaying(track) {
+  const signature = nowPlayingTrackSignature(track);
   if (signature === nowPlayingSignature) return;
   nowPlayingSignature = signature;
 
   if (!track.available) {
+    nowPlayingHasTrack = false;
     nowPlayingLabel.textContent = "Now playing";
     nowPlayingTitle.textContent = "Track information unavailable";
     nowPlayingArtist.textContent = "BBC Radio 6 Music";
@@ -63,6 +70,7 @@ function renderNowPlaying(track) {
     return;
   }
 
+  nowPlayingHasTrack = true;
   nowPlayingLabel.textContent = track.now_playing ? "Now playing" : "Recently played";
   nowPlayingTitle.textContent = track.title || "Title unavailable";
   nowPlayingArtist.textContent = track.artist || track.station || "BBC Radio 6 Music";
@@ -79,14 +87,59 @@ function renderNowPlaying(track) {
   }
 }
 
+function armNowPlayingQueue() {
+  clearTimeout(nowPlayingQueueTimer);
+  if (!nowPlayingQueue.length) return;
+  const wait = Math.max(0, nowPlayingQueue[0].dueAt - Date.now());
+  nowPlayingQueueTimer = setTimeout(() => {
+    let latest;
+    const now = Date.now();
+    while (nowPlayingQueue.length && nowPlayingQueue[0].dueAt <= now) {
+      latest = nowPlayingQueue.shift().track;
+    }
+    if (latest) renderNowPlaying(latest);
+    armNowPlayingQueue();
+  }, wait);
+}
+
+function queueNowPlaying(track) {
+  if (!track.available) {
+    if (!nowPlayingHasTrack) renderNowPlaying(track);
+    return;
+  }
+
+  const signature = nowPlayingTrackSignature(track);
+  if (!nowPlayingHasTrack) {
+    renderNowPlaying(track);
+    return;
+  }
+  if (
+    signature === nowPlayingSignature ||
+    nowPlayingQueue.some((queued) => queued.signature === signature)
+  ) {
+    return;
+  }
+
+  const configuredDelay = Number(track.display_delay_seconds);
+  const delaySeconds = Number.isFinite(configuredDelay)
+    ? Math.max(0, Math.min(120, configuredDelay))
+    : 18;
+  nowPlayingQueue.push({
+    dueAt: Date.now() + delaySeconds * 1000,
+    signature,
+    track,
+  });
+  armNowPlayingQueue();
+}
+
 async function loadNowPlaying() {
   if (nowPlayingRequestInFlight) return;
   nowPlayingRequestInFlight = true;
   try {
     const response = await fetch("/api/now-playing", { cache: "no-store" });
-    renderNowPlaying(await readResponse(response));
+    queueNowPlaying(await readResponse(response));
   } catch (_error) {
-    renderNowPlaying({ available: false });
+    if (!nowPlayingHasTrack) renderNowPlaying({ available: false });
   } finally {
     nowPlayingRequestInFlight = false;
   }
@@ -546,5 +599,5 @@ historyJobs.addEventListener("click", async (event) => {
 initialiseRadioPlayer();
 loadNowPlaying();
 loadJobs();
-setInterval(loadNowPlaying, 20000);
+setInterval(loadNowPlaying, 5000);
 setInterval(loadJobs, 2000);

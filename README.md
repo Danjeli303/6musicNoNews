@@ -109,7 +109,8 @@ stream, which remains at
 `https://PUBLIC_HOST/hls/radio6music_noNews.m3u8`. The page includes a bundled
 [Video.js 8.24.1](https://github.com/videojs/video.js) player for this live HLS
 stream. The live panel shows the current artist, track and BBC artwork using
-BBC Radio 6 Music's Radio Metadata Service, refreshing every 20 seconds. It
+BBC Radio 6 Music's Radio Metadata Service. Track changes are sampled every 5
+seconds and displayed after the stream's default 18-second processing delay. It
 reports download and news-removal progress, then displays a download
 button for the completed audio file. The activity section shows queued and
 running processes with live status, alongside previously processed programmes
@@ -121,7 +122,8 @@ volume and reappear after a container restart. Removing an item deletes its
 audio, processing log and extracted artwork. Both the HLS worker and web worker
 run from the same `six-music-skipper:local` image built by Compose.
 Set `BBC_NOW_PLAYING_URL` only if you need to override the web service's default
-BBC 6 Music metadata endpoint.
+BBC 6 Music metadata endpoint. Set `BBC_NOW_PLAYING_DELAY_SECONDS` to tune the
+metadata-to-audio synchronisation for a deployment.
 
 For host-only use without Docker:
 

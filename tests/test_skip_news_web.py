@@ -146,6 +146,15 @@ class NowPlayingTests(unittest.TestCase):
         self.assertFalse(result["now_playing"])
         self.assertIsNone(result["image_url"])
 
+    def test_bounds_configured_metadata_delay(self):
+        self.assertEqual(skip_news_web.now_playing_delay_seconds("24.5"), 24.5)
+        self.assertEqual(skip_news_web.now_playing_delay_seconds("-3"), 0)
+        self.assertEqual(skip_news_web.now_playing_delay_seconds("999"), 120)
+        self.assertEqual(
+            skip_news_web.now_playing_delay_seconds("invalid"),
+            skip_news_web.DEFAULT_NOW_PLAYING_DELAY_SECONDS,
+        )
+
 
 class WrapperTests(unittest.TestCase):
     @staticmethod
@@ -368,7 +377,8 @@ class DeploymentTests(unittest.TestCase):
         self.assertNotIn("<audio autoplay", html)
         self.assertIn('id="now-playing-title"', html)
         self.assertIn('fetch("/api/now-playing"', app)
-        self.assertIn("setInterval(loadNowPlaying, 20000)", app)
+        self.assertIn("setInterval(loadNowPlaying, 5000)", app)
+        self.assertIn("display_delay_seconds", app)
         self.assertGreater((vendor_dir / "video.min.js").stat().st_size, 100_000)
         self.assertTrue((vendor_dir / "video-js.min.css").is_file())
         self.assertTrue((vendor_dir / "LICENSE").is_file())

@@ -57,6 +57,7 @@ BBC_NOW_PLAYING_URL = (
     "?experience=domestic&offset=0&limit=4"
 )
 BBC_IMAGE_HOST = "ichef.bbci.co.uk"
+DEFAULT_NOW_PLAYING_DELAY_SECONDS = 18
 
 
 class ActiveJobError(RuntimeError):
@@ -134,7 +135,7 @@ def bbc_now_playing_from_payload(payload):
 class BBCNowPlayingService:
     """Fetch and briefly cache BBC 6 Music track metadata."""
 
-    def __init__(self, endpoint=BBC_NOW_PLAYING_URL, cache_seconds=15):
+    def __init__(self, endpoint=BBC_NOW_PLAYING_URL, cache_seconds=4):
         self.endpoint = endpoint
         self.cache_seconds = cache_seconds
         self.lock = threading.Lock()
@@ -168,6 +169,15 @@ class BBCNowPlayingService:
             self.cached = result
             self.cached_at = now
             return dict(result)
+
+
+def now_playing_delay_seconds(value):
+    """Return a safe metadata delay between zero and two minutes."""
+    try:
+        delay = float(value)
+    except (TypeError, ValueError):
+        delay = DEFAULT_NOW_PLAYING_DELAY_SECONDS
+    return max(0, min(120, delay))
 
 
 def parse_bbc_sounds_url(value):
@@ -764,6 +774,9 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
                     {"error": "BBC 6 Music track information is unavailable."},
                 )
             else:
+                payload["display_delay_seconds"] = (
+                    self.server.now_playing_delay_seconds
+                )
                 self._send_json(HTTPStatus.OK, payload)
         elif path.startswith("/api/jobs/"):
             job_id = path.rsplit("/", 1)[-1]
@@ -837,6 +850,12 @@ class SkipNewsServer(ThreadingHTTPServer):
         self.job_store = job_store
         self.now_playing_service = BBCNowPlayingService(
             os.environ.get("BBC_NOW_PLAYING_URL", BBC_NOW_PLAYING_URL)
+        )
+        self.now_playing_delay_seconds = now_playing_delay_seconds(
+            os.environ.get(
+                "BBC_NOW_PLAYING_DELAY_SECONDS",
+                DEFAULT_NOW_PLAYING_DELAY_SECONDS,
+            )
         )
 
 
