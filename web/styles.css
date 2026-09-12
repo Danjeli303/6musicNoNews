@@ -603,12 +603,12 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 
 .artwork-play {
   position: absolute;
-  inset: 50% auto auto 50%;
+  top: 50%;
+  left: 50%;
   width: 72px;
   height: 72px;
   min-height: 0;
-  display: grid;
-  place-items: center;
+  box-sizing: border-box;
   padding: 0;
   border: 2px solid #fff;
   border-radius: 50%;
@@ -621,11 +621,15 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 
 .artwork-play::before {
   content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
   width: 42px;
   height: 46px;
   background: currentColor;
   clip-path: polygon(10% 0, 100% 50%, 10% 100%);
-  transform: translateX(2px);
+  /* The triangle's centroid is 40% across this box, not 50%. */
+  transform: translate(-40%, -50%);
 }
 
 .artwork-play:hover {
@@ -644,7 +648,7 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
   width: 40px;
   height: 40px;
   clip-path: none;
-  transform: none;
+  transform: translate(-50%, -50%);
 }
 
 .programme-details { min-width: 0; }
