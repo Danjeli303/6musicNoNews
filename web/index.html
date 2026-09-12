@@ -8,7 +8,7 @@
     <title>6 Music News Skipper</title>
     <meta
       name="description"
-      content="Download a BBC Sounds programme and remove scheduled 6 Music news."
+      content="Listen to BBC 6 Music without scheduled news and process BBC Sounds programmes."
     />
     <link rel="stylesheet" href="/vendor/video.js/video-js.min.css" />
     <link rel="stylesheet" href="/styles.css" />
@@ -31,63 +31,82 @@
             <strong>SOUNDS SKIPPER</strong>
           </a>
           <nav aria-label="Primary navigation">
-            <a class="active" href="/" aria-current="page">Process a programme</a>
-            <a href="#activity">Your activity</a>
-            <a href="#live-stream">Live stream</a>
+            <a class="active" href="#live-stream" aria-current="page">Live Stream</a>
+            <a href="#process">Process</a>
+            <a href="#programmes">Programmes</a>
           </nav>
         </div>
       </div>
     </header>
 
     <main>
-      <section class="hero" aria-labelledby="page-title">
-        <div class="hero-inner">
-          <div class="hero-copy">
-            <p class="eyebrow">Radio 6 programme tool</p>
-            <h1 id="page-title">Your programme.<br /><em>Without the news.</em></h1>
-            <p class="intro">
-              Paste a BBC Sounds programme link. Skipper downloads the show, removes
-              scheduled Radio 6 news, and prepares the finished audio for you.
-            </p>
-
-            <form id="programme-form" novalidate>
-              <label for="sounds-url">BBC Sounds programme link</label>
-              <div class="input-row">
-                <input
-                  id="sounds-url"
-                  name="url"
-                  type="url"
-                  inputmode="url"
-                  autocomplete="url"
-                  placeholder="https://www.bbc.co.uk/sounds/play/m0030yw7"
-                  required
-                />
-                <button type="submit" id="submit-button">
-                  <span>Skip the news</span>
-                  <span aria-hidden="true">›</span>
-                </button>
-              </div>
-              <p class="hint">Use an individual BBC Sounds <strong>/sounds/play/</strong> link.</p>
-            </form>
-          </div>
-          <div class="hero-visual" aria-hidden="true">
-            <div class="visual-disc">
-              <span></span><span></span><span></span><span></span><span></span>
-              <span></span><span></span><span></span><span></span><span></span>
-              <span></span><span></span><span></span><span></span><span></span>
-            </div>
-            <p>NEWS<br /><b>SKIPPED</b></p>
-          </div>
-        </div>
-      </section>
-
       <div class="content-shell">
-        <section class="section-heading" aria-label="How it works">
-          <p>One link. Two steps.</p>
-          <div class="steps">
-            <span><b>01</b> Download from BBC Sounds</span>
-            <span><b>02</b> Remove scheduled news</span>
+        <section id="live-stream" class="live-section" aria-labelledby="live-title">
+          <div class="live-copy">
+            <div class="on-air"><i aria-hidden="true"></i> Live now</div>
+            <h1 id="live-title">Live Stream</h1>
+            <p>BBC Radio 6 Music without scheduled news.</p>
           </div>
+          <div class="live-player-panel">
+            <div class="station-mark" aria-hidden="true">
+              <span>6</span>
+              <b>MUSIC</b>
+            </div>
+            <div class="player-area">
+              <div id="now-playing" class="now-playing" aria-live="polite" aria-atomic="true">
+                <div class="now-playing-artwork">
+                  <img id="now-playing-image" alt="" hidden />
+                  <span id="now-playing-image-fallback" aria-hidden="true">6</span>
+                </div>
+                <div class="now-playing-copy">
+                  <p id="now-playing-label">Now playing</p>
+                  <strong id="now-playing-title">Finding the current track…</strong>
+                  <span id="now-playing-artist">BBC Radio 6 Music</span>
+                </div>
+              </div>
+              <audio
+                id="live-radio-player"
+                class="video-js"
+                controls
+                preload="none"
+                playsinline
+              >
+                <source
+                  src="/hls/radio6music_noNews.m3u8"
+                  type="application/x-mpegURL"
+                />
+                Your browser cannot play this stream.
+              </audio>
+              <p id="radio-status" class="radio-status" aria-live="polite">
+                Ready to play.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section id="process" class="process-section" aria-labelledby="process-title">
+          <div class="process-heading">
+            <h2 id="process-title">Process</h2>
+            <p>Paste a BBC Sounds programme link to remove scheduled news.</p>
+          </div>
+          <form id="programme-form" novalidate>
+            <label for="sounds-url">BBC Sounds link</label>
+            <div class="input-row">
+              <input
+                id="sounds-url"
+                name="url"
+                type="url"
+                inputmode="url"
+                autocomplete="url"
+                placeholder="https://www.bbc.co.uk/sounds/play/m0030yw7"
+                required
+              />
+              <button type="submit" id="submit-button">
+                <span>Process</span>
+                <span aria-hidden="true">›</span>
+              </button>
+            </div>
+          </form>
         </section>
 
         <section id="job-card" class="job-card" aria-live="polite" hidden>
@@ -123,88 +142,32 @@
           </a>
         </section>
 
-        <section id="live-stream" class="live-section" aria-labelledby="live-title">
-          <div class="live-copy">
-            <div class="on-air"><i aria-hidden="true"></i> Live now</div>
-            <p class="eyebrow">News-skipped radio</p>
-            <h2 id="live-title">Listen to 6 Music live.</h2>
-            <p>
-              The continuous stream keeps the music playing while scheduled news
-              segments are removed.
-            </p>
-          </div>
-          <div class="live-player-panel">
-            <div class="station-mark" aria-hidden="true">
-              <span>6</span>
-              <b>MUSIC</b>
-            </div>
-            <div class="player-area">
-              <div id="now-playing" class="now-playing" aria-live="polite" aria-atomic="true">
-                <div class="now-playing-artwork">
-                  <img id="now-playing-image" alt="" hidden />
-                  <span id="now-playing-image-fallback" aria-hidden="true">6</span>
-                </div>
-                <div class="now-playing-copy">
-                  <p id="now-playing-label">Now playing</p>
-                  <strong id="now-playing-title">Finding the current track…</strong>
-                  <span id="now-playing-artist">BBC Radio 6 Music</span>
-                </div>
-              </div>
-              <p class="stream-label">6 Music · News Skipped</p>
-              <audio
-                id="live-radio-player"
-                class="video-js"
-                controls
-                preload="none"
-                playsinline
-              >
-                <source
-                  src="/hls/radio6music_noNews.m3u8"
-                  type="application/x-mpegURL"
-                />
-                Your browser cannot play this live audio stream.
-              </audio>
-              <p id="radio-status" class="radio-status" aria-live="polite">
-                Ready to play the live stream.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section id="activity" class="activity-section" aria-labelledby="activity-title">
+        <section id="programmes" class="activity-section" aria-labelledby="programmes-title">
           <div class="activity-heading">
-            <div>
-              <p class="eyebrow">Processing library</p>
-              <h2 id="activity-title">Your activity</h2>
-              <p>Follow programmes in progress and manage finished downloads on this server.</p>
-            </div>
+            <h2 id="programmes-title">Programmes</h2>
             <button id="refresh-jobs" class="quiet-button" type="button">Refresh</button>
           </div>
 
           <div class="activity-group" aria-labelledby="current-title">
             <div class="group-heading">
-              <h3 id="current-title">Current processes</h3>
+              <h3 id="current-title">Processing</h3>
               <span id="active-count" class="count-badge">0</span>
             </div>
             <div id="active-jobs" class="process-list"></div>
-            <p id="active-empty" class="empty-state">No programmes are currently processing.</p>
+            <p id="active-empty" class="empty-state">Nothing is processing.</p>
           </div>
 
           <div class="activity-group" aria-labelledby="history-title">
             <div class="group-heading">
-              <h3 id="history-title">Previously processed</h3>
+              <h3 id="history-title">Processed</h3>
               <span id="history-count" class="count-badge">0</span>
             </div>
             <div id="history-jobs" class="process-list"></div>
-            <p id="history-empty" class="empty-state">No programmes have been processed yet.</p>
+            <p id="history-empty" class="empty-state">No processed programmes yet.</p>
           </div>
           <p id="library-message" class="library-message" aria-live="polite"></p>
         </section>
 
-        <footer>
-          <span>6 Music News Skipper is an independent, unofficial utility.</span>
-          <span class="status-dot"><i></i> Processing service online</span>
-        </footer>
       </div>
     </main>
     <script src="/vendor/video.js/video.min.js" defer></script>

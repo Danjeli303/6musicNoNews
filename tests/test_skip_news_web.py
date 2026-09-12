@@ -350,6 +350,18 @@ printf 'STAGE=complete\\n'
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_page_uses_simple_live_process_programmes_order(self):
+        html = (ROOT / "web/index.html").read_text(encoding="utf-8")
+
+        self.assertLess(html.index('id="live-stream"'), html.index('id="process"'))
+        self.assertLess(html.index('id="process"'), html.index('id="programmes"'))
+        self.assertIn('href="#live-stream" aria-current="page">Live Stream</a>', html)
+        self.assertIn('href="#process">Process</a>', html)
+        self.assertIn('href="#programmes">Programmes</a>', html)
+        self.assertNotIn("Your activity", html)
+        self.assertNotIn("Your programme.", html)
+        self.assertNotIn("Without the news.", html)
+
     def test_caddy_routes_hls_and_web_on_the_same_host(self):
         caddyfile = (ROOT / "docker/caddy/Caddyfile").read_text(encoding="utf-8")
         self.assertIn("handle_path /hls/*", caddyfile)
