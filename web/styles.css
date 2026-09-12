@@ -659,6 +659,17 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 .history-player-wrap .video-js .vjs-volume-level { background: var(--sounds-light); }
 .history-player-wrap .video-js .vjs-slider { background: #555; }
 .history-player-wrap .video-js button:hover { color: var(--sounds-light); background: transparent; }
+.history-player-wrap .video-js.vjs-layout-tiny .vjs-progress-control,
+.history-player-wrap .video-js.vjs-layout-x-small .vjs-progress-control {
+  min-width: 44px;
+  display: flex;
+  flex: 1 1 auto;
+}
+
+.history-player-wrap .video-js.vjs-layout-tiny .vjs-custom-control-spacer,
+.history-player-wrap .video-js.vjs-layout-x-small .vjs-custom-control-spacer {
+  display: none;
+}
 
 .history-player-status {
   min-height: 1.2em;

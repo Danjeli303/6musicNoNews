@@ -388,6 +388,7 @@ class DeploymentTests(unittest.TestCase):
     def test_live_player_is_bundled_and_uses_the_local_hls_stream(self):
         html = (ROOT / "web/index.html").read_text(encoding="utf-8")
         app = (ROOT / "web/app.js").read_text(encoding="utf-8")
+        styles = (ROOT / "web/styles.css").read_text(encoding="utf-8")
         vendor_dir = ROOT / "web/vendor/video.js"
 
         self.assertIn('id="live-radio-player"', html)
@@ -402,6 +403,14 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('fetch("/api/now-playing"', app)
         self.assertIn("setInterval(loadNowPlaying, 5000)", app)
         self.assertIn("display_delay_seconds", app)
+        self.assertIn(
+            ".history-player-wrap .video-js.vjs-layout-tiny .vjs-progress-control",
+            styles,
+        )
+        self.assertIn(
+            ".history-player-wrap .video-js.vjs-layout-x-small .vjs-progress-control",
+            styles,
+        )
         self.assertGreater((vendor_dir / "video.min.js").stat().st_size, 100_000)
         self.assertTrue((vendor_dir / "video-js.min.css").is_file())
         self.assertTrue((vendor_dir / "LICENSE").is_file())
