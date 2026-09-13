@@ -180,7 +180,7 @@ See `alexa-skill/README.md` for the minimal skill setup.
 Restart everything:
 
 ```
-docker compose restart
+docker compose up -d --build --force-recreate
 ```
 
 To restart the entire Compose stack automatically every day, make sure the
@@ -203,11 +203,11 @@ Adjust `/home/ubuntu/skipper` if the repository was cloned elsewhere. The
 script changes to its own directory before running Compose, so it uses this
 deployment's `docker-compose.yml` and `.env` file.
 
-Rebuild after pulling repo changes:
+Update and recreate the stack after pulling repo changes:
 
 ```
 git pull
-docker compose up -d --build
+docker compose up -d --build --force-recreate
 ```
 
 Stop the stack:

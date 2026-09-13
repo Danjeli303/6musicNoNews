@@ -4,12 +4,15 @@ CC := gcc
 # Fastest in the news-window native profile benchmark; override if needed.
 OPTFLAGS ?= -Ofast -flto
 
-utils := skipper tensor-gen bin2c silencer
+programs := skipper silencer
+tools := tensor-gen bin2c
 tests := skipper_tests silencer_tests
 
-.PHONY: all test audio-test web-test sample-recording-test clean
+.PHONY: all tools test audio-test web-test sample-recording-test clean
 
-all: $(utils)
+all: $(programs)
+
+tools: $(tools)
 
 skipper_common := skipper_time.c skipper_tensor.c
 skipper_common_headers := skipper_time.h skipper_tensor.h
@@ -47,4 +50,4 @@ sample-recording-test: skipper
 	./sample_recording_tests.sh
 
 clean:
-	rm -f skipper tensor-gen bin2c silencer $(tests)
+	rm -f $(programs) $(tools) $(tests)

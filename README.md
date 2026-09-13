@@ -22,13 +22,19 @@ Requirements for local development:
 - C compiler with `make`
 - `ffmpeg` and `ffprobe`
 - `get_iplayer` for BBC Sounds programme downloads
-- `curl` for live HLS scripts
-- `ffplay` only for local live playback
+- `curl` for the live HLS script
 
 Build the C tools:
 
 ```sh
 make
+```
+
+The model-generation utilities are not part of the runtime build. Build them
+only when regenerating the embedded classifier data:
+
+```sh
+make tools
 ```
 
 Production builds use `OPTFLAGS ?= -Ofast -flto`. Override when needed:
@@ -46,8 +52,9 @@ make clean
 
 ## Schedule Input
 
-Scripts default to `NEWS_SCHEDULE=${repo}/news_schedule.ini`. Override with
-either a schedule file or legacy minute ranges:
+The recorded-file wrapper and live HLS service default to
+`NEWS_SCHEDULE=${repo}/news_schedule.ini`. Override the recorded-file wrapper
+with either a schedule file or legacy minute ranges:
 
 ```sh
 NEWS_SCHEDULE=/path/to/schedule.ini ./skip_6music_news.sh input.m4a
@@ -57,6 +64,9 @@ NEWS_SCHEDULE=/path/to/schedule.ini ./skip_6music_news.sh input.m4a
 
 The C programs receive the schedule through `-w`. They also need stream time
 with `-T` and UTC offset with `-z` for schedule-aware filtering.
+
+For the live HLS service, set `NEWS_SCHEDULE` to another schedule file. The
+legacy minute-range CLI is intentionally limited to recorded-file processing.
 
 ## Recorded Files
 
@@ -71,14 +81,6 @@ Use `skip_6music_news.sh` for offline recordings where you want news removed:
 The input must contain a `date` metadata tag so the script can align the
 recording with the schedule. With one input argument, the output is written
 beside the input using `_newsskip` before the extension.
-
-Use `silence_6music_news.sh` when you want a same-duration file with news
-silenced:
-
-```sh
-./silence_6music_news.sh --check input.m4a
-./silence_6music_news.sh input.m4a output_silenced_talk.m4a
-```
 
 ### Download from BBC Sounds
 
@@ -123,22 +125,14 @@ For host-only use without Docker:
 python3 skip_news_web.py
 ```
 
-Both wrappers support `--profile`, which times decode, filter, and encode
-stages separately:
+The recorded-file wrapper supports `--profile`, which times decode, filter,
+and encode stages separately:
 
 ```sh
 ./skip_6music_news.sh --profile input.m4a output.m4a
-./silence_6music_news.sh --profile input.m4a output.m4a
 ```
 
 ## Live Scripts
-
-Local playback:
-
-```sh
-./play_6music_silencer.sh --check
-./play_6music_silencer.sh
-```
 
 HLS output for AWS/Caddy:
 
@@ -156,6 +150,7 @@ default. Useful environment variables:
 - `HLS_TIME`
 - `HLS_LIST_SIZE`
 - `HLS_CLEAN_START`
+- `NEWS_SCHEDULE`
 - `BBC_URL`
 - `FIP_URL`
 
@@ -193,6 +188,9 @@ make sample-recording-test
 - `audio_validation_tests.sh`: end-to-end wrapper/audio validation.
 - `get_iplayer_skip_news.sh`: temporary BBC Sounds download and recorded-file
   news-removal wrapper.
+- `radio6music_noNews_hls.sh`: live HLS generation with scheduled news
+  replacement.
+- `restart_stream.sh`: rebuilds and force-recreates the Compose stack.
 - `skip_news_web.py` and `web/`: local web service with progress and downloads.
 - `skipper_tests.c` and `silencer_tests.c`: C unit tests.
 - `Dockerfile`, `docker-compose.yml`, and `docker/caddy/Caddyfile`: AWS HLS
