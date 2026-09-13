@@ -37,6 +37,7 @@ run_pipeline_stage() {
 
 ensure_skipper() {
     if [ ! -x "$SKIPPER" ]; then
+        require_command make
         make -C "$SCRIPT_DIR" skipper
     fi
 
@@ -461,7 +462,6 @@ fi
 
 require_command ffmpeg
 require_command ffprobe
-require_command make
 
 if [ "$PROFILE_ONLY" -eq 1 ]; then
     require_command /usr/bin/time

@@ -242,6 +242,14 @@ cp "$1" "$2"
                 "fake audio",
             )
 
+    def test_packaged_skip_script_only_requires_make_when_binary_is_missing(self):
+        script = (ROOT / "skip_6music_news.sh").read_text(encoding="utf-8")
+        ensure_skipper = script.split("ensure_skipper() {", 1)[1].split("\n}", 1)[0]
+        startup = script.split("INPUT=${INPUT_ARG", 1)[1]
+
+        self.assertIn("require_command make", ensure_skipper)
+        self.assertNotIn("require_command make", startup)
+
     def test_wrapper_rejects_untrusted_urls_before_running_downloader(self):
         completed = subprocess.run(
             [
