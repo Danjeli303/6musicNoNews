@@ -4,7 +4,8 @@ This repo builds two PCM filters and a small set of BBC 6 Music helper
 scripts.
 
 - `skipper` removes selected sections from the stream, so output duration can
-  be shorter than input duration.
+  be shorter than input duration based on [Selective Audio Detection and Filter Copyright (c) 2024 David Bryant.](https://github.com/dbry/skipper)
+  
 - `silencer` keeps the original duration and replaces selected sections with
   silence.
 - The wrapper scripts use `ffmpeg`/`ffprobe` to decode files or live streams,
