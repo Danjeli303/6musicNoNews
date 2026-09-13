@@ -26,7 +26,7 @@ HLS_RESTART_DELAY_SECONDS="${HLS_RESTART_DELAY_SECONDS:-1}"
 HLS_CLEAN_START="${HLS_CLEAN_START:-0}"
 
 usage() {
-    printf 'Usage: %s [--check] [-w ranges-or-file]\n' "$0"
+    printf 'Usage: %s [--check]\n' "$0"
     printf 'Writes a rolling HLS audio stream to: %s\n' "$PLAYLIST"
     printf 'Set OUT_DIR=... to write the HLS files elsewhere.\n'
     printf 'Default silencer schedule/window: %s\n' "$SILENCER_WINDOW"
@@ -178,22 +178,6 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --check)
             CHECK_ONLY=1
-            shift
-            ;;
-        -w|--window)
-            if [ "$#" -lt 2 ]; then
-                printf 'Error: %s requires minute ranges or a schedule file\n' "$1" >&2
-                exit 1
-            fi
-            SILENCER_WINDOW=$2
-            shift 2
-            ;;
-        -w?*)
-            SILENCER_WINDOW=${1#-w}
-            shift
-            ;;
-        --window=*)
-            SILENCER_WINDOW=${1#--window=}
             shift
             ;;
         -h|--help)
