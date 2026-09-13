@@ -29,6 +29,13 @@ PID_PATTERN = re.compile(r"^[a-z0-9]{8}$")
 ANSI_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 DOWNLOAD_PROGRESS_PATTERN = re.compile(r"(?:^|\s)(\d{1,3}(?:\.\d+)?)%")
 PROCESS_PROGRESS_PATTERN = re.compile(r"Processed:\s*(\d{1,3})%")
+SAMPLE_RATE_PATTERN = re.compile(r"^sample rate = (\d+)$", re.MULTILINE)
+SAMPLE_OPERATION_PATTERNS = (
+    re.compile(r"^fade out: wrote (\d+) samples", re.MULTILINE),
+    re.compile(r"^fade in: discarded (\d+) samples", re.MULTILINE),
+    re.compile(r"^(wrote|discarded) (\d+) samples", re.MULTILINE),
+    re.compile(r"^final: (wrote|discarded) (\d+) samples", re.MULTILINE),
+)
 MEDIA_EXTENSIONS = {
     ".flac",
     ".m4a",
@@ -249,6 +256,105 @@ def media_details_from_tags(tags, pid=None, filename=None):
     }
 
 
+def _seconds(value):
+    match = re.fullmatch(r"(\d+):(\d{2}):(\d{2})", value.strip())
+    if not match:
+        return None
+    hours, minutes, seconds = (int(part) for part in match.groups())
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def parse_get_iplayer_tracklist(text, pid=None):
+    """Normalize get_iplayer's text track list into timed track records."""
+    if not isinstance(text, str):
+        return []
+    blocks = re.split(r"^--------\s*$", text, flags=re.MULTILINE)[1:]
+    tracks = []
+    for block in blocks:
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if len(lines) < 3:
+            continue
+        start = _seconds(lines[0])
+        if start is None:
+            continue
+        metadata = {}
+        for line in lines[3:]:
+            if ": " in line:
+                key, value = line.split(": ", 1)
+                metadata[key.casefold()] = _clean_text(value, 300)
+        duration = _seconds(metadata.get("duration") or "")
+        tracks.append(
+            {
+                "available": True,
+                "artist": _clean_text(lines[1], 200),
+                "title": _clean_text(lines[2], 300),
+                "album": metadata.get("release title"),
+                "record_label": metadata.get("record label"),
+                "duration_seconds": duration,
+                "original_start_seconds": start,
+                "start_seconds": start,
+                "end_seconds": start + duration if duration is not None else None,
+                "image_url": None,
+                "source": "BBC Radio 6 Music",
+                "programme_pid": pid,
+            }
+        )
+    return tracks
+
+
+def _sample_operations(log_text):
+    operations = []
+    for pattern in SAMPLE_OPERATION_PATTERNS:
+        for match in pattern.finditer(log_text):
+            groups = match.groups()
+            if len(groups) == 1:
+                written = pattern is SAMPLE_OPERATION_PATTERNS[0]
+                count = int(groups[0])
+            else:
+                written = groups[0] == "wrote"
+                count = int(groups[1])
+            operations.append((match.start(), written, count))
+    operations.sort(key=lambda operation: operation[0])
+    return [(written, count) for _, written, count in operations]
+
+
+def adjust_tracklist_for_skips(tracks, log_text):
+    """Map original track offsets onto audio shortened by actual discarded samples."""
+    sample_rate_match = SAMPLE_RATE_PATTERN.search(log_text or "")
+    if not sample_rate_match:
+        return tracks
+    sample_rate = int(sample_rate_match.group(1))
+    operations = _sample_operations(log_text)
+    if sample_rate < 1 or not operations:
+        return tracks
+
+    def output_seconds_at(original_seconds):
+        target = round(original_seconds * sample_rate)
+        consumed = 0
+        written_total = 0
+        for written, count in operations:
+            amount = min(count, max(0, target - consumed))
+            if written:
+                written_total += amount
+            consumed += count
+            if consumed >= target:
+                break
+        if consumed < target:
+            written_total += target - consumed
+        return round(written_total / sample_rate, 3)
+
+    adjusted = []
+    for track in tracks:
+        item = dict(track)
+        item["start_seconds"] = output_seconds_at(track["original_start_seconds"])
+        original_end = track["original_start_seconds"] + (track["duration_seconds"] or 0)
+        item["end_seconds"] = (
+            output_seconds_at(original_end) if track["duration_seconds"] is not None else None
+        )
+        adjusted.append(item)
+    return adjusted
+
+
 class JobStore:
     def __init__(self, script_path, output_dir):
         self.script_path = Path(script_path).resolve()
@@ -302,6 +408,28 @@ class JobStore:
     @staticmethod
     def _artwork_path(output_path):
         return output_path.with_name(output_path.stem + ".artwork.jpg")
+
+    @staticmethod
+    def _tracklist_path(output_path):
+        return output_path.with_name(output_path.stem + ".tracks.txt")
+
+    def _tracks(self, output_path, pid):
+        tracklist_path = self._tracklist_path(output_path)
+        if not tracklist_path.is_file():
+            return []
+        try:
+            tracks = parse_get_iplayer_tracklist(
+                tracklist_path.read_text(encoding="utf-8", errors="replace"), pid
+            )
+            log_path = output_path.with_suffix(".log")
+            log_text = (
+                log_path.read_text(encoding="utf-8", errors="replace")
+                if log_path.is_file()
+                else ""
+            )
+            return adjust_tracklist_for_skips(tracks, log_text)
+        except OSError:
+            return []
 
     def _extract_artwork(self, output_path):
         artwork_path = self._artwork_path(output_path)
@@ -385,6 +513,7 @@ class JobStore:
                 "artwork_url": (
                     "/artwork/" + quote(artwork_path.name) if artwork_path else None
                 ),
+                "tracks": self._tracks(output_path, pid),
             }
         )
         return details
@@ -465,6 +594,7 @@ class JobStore:
             output_path.unlink(missing_ok=True)
             output_path.with_suffix(".log").unlink(missing_ok=True)
             self._artwork_path(output_path).unlink(missing_ok=True)
+            self._tracklist_path(output_path).unlink(missing_ok=True)
 
         with self.lock:
             removed = self.jobs.pop(job_id, None)

@@ -111,10 +111,19 @@ Open `https://PUBLIC_HOST/`. The page provides:
 - the news-skipped live stream with BBC track metadata
 - BBC Sounds programme processing with progress
 - playback, download, and removal of completed programmes
+- current-track details during live and processed playback
+- a browser-local favourites list, with Last.fm searches from every track title
 
 Playback does not start automatically and only one player can play at a time.
 Completed files persist in the `skipper_downloads` volume. The HLS stream is
 also available at `https://PUBLIC_HOST/hls/radio6music_noNews.m3u8`.
+
+Programme downloads also retain get_iplayer's track list. Skipper records the
+samples it actually removes and uses that log to move the original BBC track
+timestamps onto the shortened audio timeline. The `.tracks.txt` and `.log`
+sidecars must remain beside the processed media file for offline track details.
+Favourites use a Last.fm-compatible track shape in browser storage; no Last.fm
+account or API key is required yet.
 
 Set `BBC_NOW_PLAYING_URL` to override the BBC metadata endpoint or
 `BBC_NOW_PLAYING_DELAY_SECONDS` to adjust the default 18-second display delay.

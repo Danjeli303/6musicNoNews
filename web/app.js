@@ -305,6 +305,20 @@ function createProcessItem(job, isActive) {
 
     if (job.status === "complete" && job.media_url) {
       const playerWrap = makeElement("div", "history-player-wrap");
+      const trackInfo = makeElement("div", "offline-now-playing");
+      trackInfo.dataset.trackInfoId = job.id;
+      trackInfo.hidden = true;
+      const trackCopy = makeElement("div", "offline-track-copy");
+      trackCopy.append(
+        makeElement("p", "offline-track-label", "Playing track"),
+        makeElement("a", "offline-track-title track-search-link", ""),
+        makeElement("span", "offline-track-artist", ""),
+      );
+      const favourite = makeElement("button", "favourite-button");
+      favourite.type = "button";
+      favourite.dataset.trackFavouriteId = job.id;
+      favourite.append(makeElement("span", "", "♡"));
+      trackInfo.append(trackCopy, favourite);
       const audio = makeElement("audio", "video-js history-audio");
       audio.id = `history-audio-${job.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
       audio.controls = true;
@@ -319,7 +333,7 @@ function createProcessItem(job, isActive) {
         "Ready to play.",
       );
       playerStatus.dataset.playerStatusId = job.id;
-      playerWrap.append(audio, playerStatus);
+      playerWrap.append(trackInfo, audio, playerStatus);
       programme.append(playerWrap);
     }
 
@@ -393,7 +407,11 @@ function initialiseHistoryPlayers(history) {
     const status = historyJobs.querySelector(
       `[data-player-status-id="${job.id}"]`,
     );
-    if (!button || !status || !document.getElementById(audioId)) return;
+    const trackInfo = historyJobs.querySelector(`[data-track-info-id="${job.id}"]`);
+    const favourite = historyJobs.querySelector(
+      `[data-track-favourite-id="${job.id}"]`,
+    );
+    if (!button || !status || !trackInfo || !favourite || !document.getElementById(audioId)) return;
 
     const title = job.display_title || job.title || job.filename || "programme";
     const player = window.videojs(audioId, {
@@ -403,8 +421,51 @@ function initialiseHistoryPlayers(history) {
       preload: "none",
       responsive: true,
     });
-    const entry = { player, button, status, title };
+    const entry = {
+      player,
+      button,
+      status,
+      title,
+      trackInfo,
+      favourite,
+      tracks: Array.isArray(job.tracks) ? job.tracks : [],
+      currentTrack: undefined,
+      trackSignature: "",
+    };
     historyPlayers.set(job.id, entry);
+
+    const renderPlayingTrack = () => {
+      const currentTime = player.currentTime();
+      const track = entry.tracks.find((candidate) => {
+        const start = Number(candidate.start_seconds);
+        const end = Number(candidate.end_seconds);
+        return Number.isFinite(start) && currentTime >= start && (!Number.isFinite(end) || currentTime < end);
+      });
+      const signature = track
+        ? JSON.stringify([track.artist, track.title, track.start_seconds])
+        : "";
+      if (signature === entry.trackSignature) return;
+      entry.trackSignature = signature;
+      entry.currentTrack = track;
+      entry.trackInfo.hidden = !track;
+      if (!track) return;
+      const trackTitle = entry.trackInfo.querySelector(".offline-track-title");
+      const trackArtist = entry.trackInfo.querySelector(".offline-track-artist");
+      trackTitle.textContent = track.title || "Title unavailable";
+      trackTitle.href = window.SkipperFavourites.lastFmSearchUrl(track);
+      trackTitle.target = "_blank";
+      trackTitle.rel = "noopener";
+      trackArtist.textContent = track.artist || "Artist unavailable";
+      updateFavouriteButton(entry.favourite, track);
+    };
+
+    favourite.addEventListener("click", () => {
+      if (!entry.currentTrack) return;
+      window.SkipperFavourites.toggle(entry.currentTrack);
+      updateFavouriteButton(favourite, entry.currentTrack);
+    });
+    player.on("timeupdate", renderPlayingTrack);
+    player.on("seeked", renderPlayingTrack);
 
     button.addEventListener("click", () => {
       if (player.paused()) {
@@ -452,6 +513,7 @@ function libraryHistorySignature(history) {
       job.artwork_url,
       job.media_url,
       job.file_size,
+      job.tracks,
     ]),
   );
 }
@@ -617,6 +679,16 @@ nowPlayingFavourite.addEventListener("click", () => {
 
 window.addEventListener("storage", () => {
   updateFavouriteButton(nowPlayingFavourite, currentLiveTrack);
+  historyPlayers.forEach((entry) => {
+    updateFavouriteButton(entry.favourite, entry.currentTrack);
+  });
+});
+
+window.addEventListener("skipper:favourites-changed", () => {
+  updateFavouriteButton(nowPlayingFavourite, currentLiveTrack);
+  historyPlayers.forEach((entry) => {
+    updateFavouriteButton(entry.favourite, entry.currentTrack);
+  });
 });
 
 initialiseRadioPlayer();
