@@ -26,6 +26,7 @@ const nowPlayingImage = document.querySelector("#now-playing-image");
 const nowPlayingImageFallback = document.querySelector(
   "#now-playing-image-fallback",
 );
+const nowPlayingFavourite = document.querySelector("#now-playing-favourite");
 
 let pollTimer;
 let displayedJobId;
@@ -36,6 +37,7 @@ let nowPlayingSignature = "";
 let nowPlayingRequestInFlight = false;
 let nowPlayingQueueTimer;
 let nowPlayingHasTrack = false;
+let currentLiveTrack;
 let pendingNowPlayingSignature = "";
 const historyPlayers = new Map();
 
@@ -63,18 +65,24 @@ function renderNowPlaying(track) {
 
   if (!track.available) {
     nowPlayingHasTrack = false;
+    currentLiveTrack = undefined;
     nowPlayingLabel.textContent = "Now playing";
     nowPlayingTitle.textContent = "Track information unavailable";
     nowPlayingArtist.textContent = "BBC Radio 6 Music";
     showNowPlayingFallback();
+    updateFavouriteButton(nowPlayingFavourite, undefined);
     return;
   }
 
   nowPlayingHasTrack = true;
+  currentLiveTrack = track;
   nowPlayingLabel.textContent = track.now_playing
     ? "Now playing"
     : "Recently played";
   nowPlayingTitle.textContent = track.title || "Title unavailable";
+  nowPlayingTitle.href = window.SkipperFavourites.lastFmSearchUrl(track);
+  nowPlayingTitle.target = "_blank";
+  nowPlayingTitle.rel = "noopener";
   nowPlayingArtist.textContent = track.artist || "BBC Radio 6 Music";
   if (track.image_url) {
     nowPlayingImage.onload = () => {
@@ -87,6 +95,22 @@ function renderNowPlaying(track) {
   } else {
     showNowPlayingFallback();
   }
+  updateFavouriteButton(nowPlayingFavourite, track);
+}
+
+function updateFavouriteButton(button, track) {
+  if (!button) return;
+  const available = Boolean(track && (track.title || track.name));
+  const isFavourite = available && window.SkipperFavourites.has(track);
+  button.disabled = !available;
+  button.classList.toggle("is-favourite", isFavourite);
+  button.querySelector("span").textContent = isFavourite ? "♥" : "♡";
+  const action = isFavourite ? "Remove from" : "Add to";
+  const description = track
+    ? `${track.title || track.name} by ${track.artist?.name || track.artist || "unknown artist"}`
+    : "the current track";
+  button.title = `${action} favourites`;
+  button.setAttribute("aria-label", `${action} favourites: ${description}`);
 }
 
 function queueNowPlaying(track) {
@@ -583,6 +607,16 @@ historyJobs.addEventListener("click", async (event) => {
     libraryMessage.textContent = error.message;
     removeButton.disabled = false;
   }
+});
+
+nowPlayingFavourite.addEventListener("click", () => {
+  if (!currentLiveTrack) return;
+  window.SkipperFavourites.toggle(currentLiveTrack);
+  updateFavouriteButton(nowPlayingFavourite, currentLiveTrack);
+});
+
+window.addEventListener("storage", () => {
+  updateFavouriteButton(nowPlayingFavourite, currentLiveTrack);
 });
 
 initialiseRadioPlayer();

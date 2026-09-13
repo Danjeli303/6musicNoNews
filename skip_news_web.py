@@ -759,6 +759,12 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
             self._send_static("index.html")
         elif path == "/app.js":
             self._send_static("app.js")
+        elif path == "/favourites.html":
+            self._send_static("favourites.html")
+        elif path == "/favourites.js":
+            self._send_static("favourites.js")
+        elif path == "/favourites-page.js":
+            self._send_static("favourites-page.js")
         elif path == "/styles.css":
             self._send_static("styles.css")
         elif path.startswith("/vendor/"):

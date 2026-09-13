@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#000000" />
+    <title>Favourite tracks · 6 Music News Skipper</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="utility-bar">
+        <div class="utility-inner">
+          <a class="block-logo" href="/" aria-label="6 Music News Skipper home"><b>6</b><b>M</b><b>N</b></a>
+          <span class="utility-name">6 Music News Skipper</span>
+          <span class="unofficial">Unofficial utility</span>
+        </div>
+      </div>
+    </header>
+    <main>
+      <div class="content-shell favourites-page">
+        <div class="favourites-heading">
+          <div>
+            <p class="eyebrow">Your library</p>
+            <h1>Favourite tracks</h1>
+            <p>Tracks saved from live radio and processed programmes.</p>
+          </div>
+          <a class="quiet-button" href="/">Back to player</a>
+        </div>
+        <div id="favourites-list" class="favourites-list"></div>
+        <p id="favourites-empty" class="empty-state">No favourites yet. Use the heart beside a playing track to add one.</p>
+      </div>
+    </main>
+    <script src="/favourites.js" defer></script>
+    <script src="/favourites-page.js" defer></script>
+  </body>
+</html>

@@ -423,6 +423,18 @@ class DeploymentTests(unittest.TestCase):
         self.assertTrue((vendor_dir / "video-js.min.css").is_file())
         self.assertTrue((vendor_dir / "LICENSE").is_file())
 
+    def test_favourites_use_a_shared_lastfm_compatible_store(self):
+        html = (ROOT / "web/index.html").read_text(encoding="utf-8")
+        favourites = (ROOT / "web/favourites.js").read_text(encoding="utf-8")
+        favourites_page = (ROOT / "web/favourites.html").read_text(encoding="utf-8")
+
+        self.assertIn('href="/favourites.html" target="_blank"', html)
+        self.assertIn('id="now-playing-favourite"', html)
+        self.assertIn('src="/favourites.js"', html)
+        self.assertIn("skipper.favouriteTracks.v1", favourites)
+        self.assertIn("https://www.last.fm/search?q=", favourites)
+        self.assertIn('id="favourites-list"', favourites_page)
+
 
 if __name__ == "__main__":
     unittest.main()

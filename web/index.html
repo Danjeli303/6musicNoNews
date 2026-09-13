@@ -34,6 +34,7 @@
             <a class="active" href="#live-stream" aria-current="page">Live Stream</a>
             <a href="#process">Process</a>
             <a href="#programmes">Programmes</a>
+            <a href="/favourites.html" target="_blank" rel="noopener">Favourites</a>
           </nav>
         </div>
       </div>
@@ -60,9 +61,19 @@
                 </div>
                 <div class="now-playing-copy">
                   <p id="now-playing-label">Now playing</p>
-                  <strong id="now-playing-title">Finding the current track…</strong>
+                  <a id="now-playing-title" class="track-search-link">Finding the current track…</a>
                   <span id="now-playing-artist">BBC Radio 6 Music</span>
                 </div>
+                <button
+                  id="now-playing-favourite"
+                  class="favourite-button"
+                  type="button"
+                  aria-label="Add the current track to favourites"
+                  title="Add to favourites"
+                  disabled
+                >
+                  <span aria-hidden="true">♡</span>
+                </button>
               </div>
               <audio
                 id="live-radio-player"
@@ -171,6 +182,7 @@
       </div>
     </main>
     <script src="/vendor/video.js/video.min.js" defer></script>
+    <script src="/favourites.js" defer></script>
     <script src="/app.js" defer></script>
   </body>
 </html>
