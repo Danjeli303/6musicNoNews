@@ -67,11 +67,157 @@ get_stream_start_time() {
     printf '%s\n' "$start_time"
 }
 
+stream_start_week_second() (
+    # Convert the HLS timestamp to London local time. GNU date is used in the
+    # container; the BSD branch keeps local macOS checks working too.
+    if date --version >/dev/null 2>&1; then
+        local_clock=$(TZ=Europe/London date -d "$START_TIME" '+%w %H %M %S')
+    else
+        timestamp=$(printf '%s\n' "$START_TIME" | sed 's/\.[0-9]*//; s/Z$/+0000/; s/\([+-][0-9][0-9]\):\([0-9][0-9]\)$/\1\2/')
+        epoch=$(TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%S%z' "$timestamp" '+%s')
+        local_clock=$(TZ=Europe/London date -r "$epoch" '+%w %H %M %S')
+    fi
+
+    printf '%s\n' "$local_clock" | awk '{ print $1 * 86400 + $2 * 3600 + $3 * 60 + $4 }'
+)
+
+news_gate_expression_from_schedule() {
+    schedule_file=$1
+    start_week_second=$2
+    fade_out_ms=$3
+
+    awk -v base="$start_week_second" -v fade_out_ms="$fade_out_ms" '
+        function trim(value) {
+            sub(/^[[:space:]]+/, "", value)
+            sub(/[[:space:]]+$/, "", value)
+            return value
+        }
+        function fail(message) {
+            print "Error: " message > "/dev/stderr"
+            failed = 1
+            exit 1
+        }
+        function add_condition(condition) {
+            expression = expression (expression == "" ? "" : "+") condition
+        }
+        function add_window(start_second, end_second,    week, wrapped_start, wrapped_end) {
+            week = 7 * 86400
+            wrapped_start = start_second % week
+            wrapped_end = end_second % week
+            if (wrapped_start < 0) wrapped_start += week
+            if (wrapped_end < 0) wrapped_end += week
+
+            if (wrapped_start < wrapped_end) {
+                add_condition(sprintf("between(mod(t+%d\\,604800)\\,%.3f\\,%.3f)", base, wrapped_start, wrapped_end))
+            } else {
+                add_condition(sprintf("between(mod(t+%d\\,604800)\\,%.3f\\,604800)", base, wrapped_start))
+                add_condition(sprintf("between(mod(t+%d\\,604800)\\,0\\,%.3f)", base, wrapped_end))
+            }
+        }
+        function parse_times(value, destination,    count, items, i, parts, hour, minute) {
+            count = split(value, items, ",")
+            for (i = 1; i <= count; ++i) {
+                items[i] = trim(items[i])
+                if (split(items[i], parts, ":") != 2 || parts[1] !~ /^[0-9]+$/ ||
+                    parts[2] !~ /^[0-9]+$/ || parts[1] + 0 > 23 || parts[2] + 0 > 59)
+                    fail("invalid news time in " FILENAME ": " items[i])
+                hour = parts[1] + 0
+                minute = parts[2] + 0
+                if (destination == "weekday") weekday[++weekday_count] = hour * 60 + minute
+                else weekend[++weekend_count] = hour * 60 + minute
+            }
+        }
+        {
+            line = $0
+            sub(/[;#].*$/, "", line)
+            line = trim(line)
+            if (line == "") next
+            if (line ~ /^\[[^]]+\]$/) {
+                section = tolower(substr(line, 2, length(line) - 2))
+                next
+            }
+            separator = index(line, "=")
+            if (!separator) fail("invalid line in news schedule: " line)
+            key = tolower(trim(substr(line, 1, separator - 1)))
+            value = trim(substr(line, separator + 1))
+            if (section == "window" && (key == "before_minutes" || key == "before")) before = value + 0
+            else if (section == "window" && (key == "after_minutes" || key == "after")) after = value + 0
+            else if (section == "weekday" && key == "times") parse_times(value, "weekday")
+            else if (section == "weekend" && key == "times") parse_times(value, "weekend")
+            else fail("unsupported news schedule entry: " line)
+        }
+        END {
+            if (failed) exit 1
+            if (before == "" || after == "" || before < 0 || after < 0 || before + after <= 0 ||
+                !weekday_count || !weekend_count)
+                fail("incomplete news schedule: " FILENAME)
+
+            # date +%w uses Sunday=0, matching these day numbers.
+            for (day = 1; day <= 5; ++day)
+                for (i = 1; i <= weekday_count; ++i)
+                    add_window(day * 86400 + (weekday[i] - before) * 60,
+                               day * 86400 + (weekday[i] + after) * 60 + fade_out_ms / 1000)
+            for (day = 0; day <= 6; day += 6)
+                for (i = 1; i <= weekend_count; ++i)
+                    add_window(day * 86400 + (weekend[i] - before) * 60,
+                               day * 86400 + (weekend[i] + after) * 60 + fade_out_ms / 1000)
+
+            print "min(1\\," expression ")"
+        }
+    ' "$schedule_file"
+}
+
+news_gate_expression_from_ranges() {
+    ranges=$1
+    start_week_second=$2
+    fade_out_ms=$3
+
+    printf '%s\n' "$ranges" | awk -v base="$start_week_second" -v fade_out_ms="$fade_out_ms" '
+        function fail(message) {
+            print "Error: " message > "/dev/stderr"
+            exit 1
+        }
+        function add(condition) {
+            expression = expression (expression == "" ? "" : "+") condition
+        }
+        BEGIN { FS = "," }
+        {
+            for (i = 1; i <= NF; ++i) {
+                if (split($i, limits, "-") != 2 || limits[1] !~ /^[0-9]+$/ || limits[2] !~ /^[0-9]+$/)
+                    fail("invalid minute range: " $i)
+                start = limits[1] + 0
+                end = limits[2] + 0
+                if (start > 59 || end > 59 || start == end) fail("invalid minute range: " $i)
+                if (start < end)
+                    add(sprintf("between(mod(t+%d\\,3600)\\,%d\\,%.3f)", base, start * 60, end * 60 + fade_out_ms / 1000))
+                else {
+                    add(sprintf("between(mod(t+%d\\,3600)\\,%d\\,3600)", base, start * 60))
+                    add(sprintf("between(mod(t+%d\\,3600)\\,0\\,%.3f)", base, end * 60 + fade_out_ms / 1000))
+                }
+            }
+        }
+        END {
+            if (expression == "") fail("no minute ranges supplied")
+            print "min(1\\," expression ")"
+        }
+    '
+}
+
+build_news_gate_expression() {
+    start_week_second=$(stream_start_week_second)
+    if [ -f "$SILENCER_WINDOW" ]; then
+        news_gate_expression_from_schedule "$SILENCER_WINDOW" "$start_week_second" "$FIP_FADE_OUT_MS"
+    else
+        news_gate_expression_from_ranges "$SILENCER_WINDOW" "$start_week_second" "$FIP_FADE_OUT_MS"
+    fi
+}
+
 mix_with_fip_filter() {
     printf '[0:a]aformat=sample_fmts=fltp:channel_layouts=stereo,asplit=2[bbc][sc];'
     printf '[1:a]aresample=%s,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=%s[fip];' "$SAMPLE_RATE" "$FIP_VOLUME"
     printf '[fip][sc]sidechaincompress=threshold=%s:ratio=%s:attack=%s:release=%s:makeup=1:link=maximum:detection=rms[fipduck];' "$DUCK_THRESHOLD" "$DUCK_RATIO" "$FIP_FADE_OUT_MS" "$FIP_FADE_IN_MS"
-    printf '[bbc][fipduck]amix=inputs=2:duration=first:normalize=0:dropout_transition=0,alimiter=limit=0.95,aresample=async=1000:first_pts=0[out]'
+    printf "[fipduck]volume='%s':eval=frame[fipwindowed];" "$NEWS_GATE_EXPRESSION"
+    printf '[bbc][fipwindowed]amix=inputs=2:duration=first:normalize=0:dropout_transition=0,alimiter=limit=0.95,aresample=async=1000:first_pts=0[out]'
 }
 
 ensure_output_dir() {
@@ -98,6 +244,7 @@ run_pipeline() {
     if [ "${1:-}" != "" ]; then
         duration_args="-t $1"
     fi
+    NEWS_GATE_EXPRESSION=$(build_news_gate_expression)
 
     # live_start_index 0 matches FFmpeg's first decoded segment to the first
     # PROGRAM-DATE-TIME captured from the same media playlist.
@@ -173,6 +320,10 @@ run_pipeline_forever() {
     done
 }
 
+if [ "${SKIPPER_HLS_FUNCTIONS_ONLY:-0}" = "1" ]; then
+    return 0
+fi
+
 CHECK_ONLY=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -208,6 +359,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 require_command curl
+require_command awk
+require_command date
 require_command ffmpeg
 ensure_silencer
 

@@ -414,6 +414,63 @@ run_hls_mux_check() {
     assert_duration_between "$playlist" "$hls_duration" 16 24
 }
 
+run_hls_schedule_gate_case() (
+    label=$1
+    stream_start=$2
+    expected=$3
+    output_pcm="$WORK_DIR/hls-gate-$label.pcm"
+
+    SKIPPER_HLS_FUNCTIONS_ONLY=1 . "$SCRIPT_DIR/radio6music_noNews_hls.sh"
+    START_TIME=$stream_start
+    SILENCER_WINDOW="$SCRIPT_DIR/news_schedule.ini"
+    NEWS_GATE_EXPRESSION=$(build_news_gate_expression)
+
+    ffmpeg \
+      -hide_banner \
+      -loglevel error \
+      -y \
+      -f lavfi -i "anullsrc=r=$SAMPLE_RATE:cl=stereo:d=2" \
+      -f lavfi -i "sine=frequency=1000:sample_rate=$SAMPLE_RATE:duration=2" \
+      -filter_complex "$(mix_with_fip_filter)" \
+      -map '[out]' \
+      -f s16le -ar "$SAMPLE_RATE" -ac "$CHANNELS" \
+      "$output_pcm"
+
+    assert_file_nonempty "$output_pcm"
+    case "$expected" in
+        silent)
+            assert_pcm_all_zero "$output_pcm"
+            ;;
+        audible)
+            assert_pcm_has_signal "$output_pcm"
+            ;;
+        fade-tail)
+            fade_active_pcm="$WORK_DIR/hls-gate-$label-active.pcm"
+            fade_ended_pcm="$WORK_DIR/hls-gate-$label-ended.pcm"
+            ffmpeg -hide_banner -loglevel error -y \
+              -f s16le -ar "$SAMPLE_RATE" -ac "$CHANNELS" -i "$output_pcm" \
+              -af 'atrim=start=0.4:end=0.6' -f s16le "$fade_active_pcm"
+            ffmpeg -hide_banner -loglevel error -y \
+              -f s16le -ar "$SAMPLE_RATE" -ac "$CHANNELS" -i "$output_pcm" \
+              -af 'atrim=start=1' -f s16le "$fade_ended_pcm"
+            assert_pcm_has_signal "$fade_active_pcm"
+            assert_pcm_all_zero "$fade_ended_pcm"
+            ;;
+        *)
+            printf 'Error: unknown HLS schedule gate expectation: %s\n' "$expected" >&2
+            exit 1
+            ;;
+    esac
+)
+
+run_hls_schedule_gate_checks() {
+    # On Monday 14 September 2026, 06:27Z is 07:27 in London and outside
+    # the 07:30 news window. 06:29Z is 07:29 and inside its 07:28-07:35 window.
+    run_hls_schedule_gate_case outside-news-window '2026-09-14T06:27:00Z' silent
+    run_hls_schedule_gate_case inside-news-window '2026-09-14T06:29:00Z' audible
+    run_hls_schedule_gate_case news-window-fade-tail '2026-09-14T06:35:00Z' fade-tail
+}
+
 run_container_packaging_checks() {
     assert_log_contains "$SCRIPT_DIR/Dockerfile" 'COPY[[:space:]]+news_schedule\.ini[[:space:]]+\./' 'news schedule image copy'
     assert_log_contains "$SCRIPT_DIR/radio6music_noNews_hls.sh" 'aac_coder[[:space:]]+"\$HLS_AAC_CODER"' 'fast HLS AAC encoder'
@@ -437,9 +494,10 @@ main() {
     run_format_conversion_checks
     run_silencer_checks
     run_hls_mux_check
+    run_hls_schedule_gate_checks
     run_container_packaging_checks
 
-    printf 'OK: generated audio, wrapper checks, file conversion, scheduled silence/pass-through, HLS muxing, and container packaging checks\n'
+    printf 'OK: generated audio, wrapper checks, file conversion, scheduled silence/pass-through, HLS schedule gating, HLS muxing, and container packaging checks\n'
 }
 
 main "$@"
