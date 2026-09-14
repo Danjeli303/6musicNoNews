@@ -75,3 +75,5 @@ function renderFavourites() {
 window.addEventListener("storage", renderFavourites);
 window.addEventListener("skipper:favourites-changed", renderFavourites);
 renderFavourites();
+window.SkipperFavourites.load();
+setInterval(() => window.SkipperFavourites.load(true), 30_000);

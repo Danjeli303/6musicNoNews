@@ -113,7 +113,6 @@ Record Label: Example Records
 Duration: 00:00:02
 --------
 """
-
     def test_parses_get_iplayer_track_information(self):
         tracks = skip_news_web.parse_get_iplayer_tracklist(
             self.TRACKLIST, pid="m0030yw7"
@@ -175,6 +174,39 @@ timeline: input_samples=250 output_samples=200 discarded_samples=50
             adjusted["end_seconds"] - adjusted["start_seconds"],
             track["duration_seconds"],
         )
+
+
+class FavouriteStoreTests(unittest.TestCase):
+    def test_persists_lastfm_shaped_favourites_between_instances(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            path = Path(output_dir) / "favourites.json"
+            store = skip_news_web.FavouriteStore(path)
+            saved = store.add(
+                {
+                    "name": "Example Track",
+                    "artist": {"name": "Example Artist"},
+                    "programme": "Lauren Laverne",
+                    "presenter": "Lauren Laverne",
+                    "programme_pid": "m00318j8",
+                }
+            )
+
+            self.assertEqual(saved["name"], "Example Track")
+            reloaded = skip_news_web.FavouriteStore(path)
+            self.assertEqual(reloaded.list()["tracks"][0]["programme"], "Lauren Laverne")
+            self.assertTrue(reloaded.remove(saved))
+            self.assertEqual(skip_news_web.FavouriteStore(path).list(), {"tracks": []})
+
+    def test_readding_a_track_updates_context_without_duplication(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            store = skip_news_web.FavouriteStore(Path(output_dir) / "favourites.json")
+            track = {"name": "Track", "artist": {"name": "Artist"}}
+            store.add({**track, "programme": "First show"})
+            store.add({**track, "programme": "Current show"})
+
+            favourites = store.list()["tracks"]
+            self.assertEqual(len(favourites), 1)
+            self.assertEqual(favourites[0]["programme"], "Current show")
 
 
 class NowPlayingTests(unittest.TestCase):
@@ -580,6 +612,7 @@ class DeploymentTests(unittest.TestCase):
 
     def test_favourites_use_a_shared_lastfm_compatible_store(self):
         html = (ROOT / "web/index.html").read_text(encoding="utf-8")
+        app = (ROOT / "web/app.js").read_text(encoding="utf-8")
         favourites = (ROOT / "web/favourites.js").read_text(encoding="utf-8")
         favourites_page = (ROOT / "web/favourites.html").read_text(encoding="utf-8")
 
@@ -590,6 +623,8 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('src="/favourites.js"', html)
         self.assertIn('src="/favourites-page.js"', html)
         self.assertIn("skipper.favouriteTracks.v1", favourites)
+        self.assertIn('const API_URL = "/api/favourites"', favourites)
+        self.assertIn("window.SkipperFavourites.load()", app)
         self.assertIn("https://www.google.com/search?q=", favourites)
         self.assertIn("programme: clean(track?.programme)", favourites)
         self.assertIn("presenter: clean(track?.presenter)", favourites)

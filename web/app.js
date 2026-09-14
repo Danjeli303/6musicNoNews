@@ -967,6 +967,7 @@ window.addEventListener("skipper:favourites-changed", () => {
 });
 
 initialiseRadioPlayer();
+window.SkipperFavourites.load();
 loadNowPlaying();
 loadJobs();
 setInterval(loadNowPlaying, 5000);

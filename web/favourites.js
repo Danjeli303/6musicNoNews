@@ -2,6 +2,9 @@
   "use strict";
 
   const STORAGE_KEY = "skipper.favouriteTracks.v1";
+  const API_URL = "/api/favourites";
+  let tracks = [];
+  let loadRequest;
 
   function clean(value) {
     return typeof value === "string" ? value.trim() : "";
@@ -63,7 +66,7 @@
     };
   }
 
-  function read() {
+  function readLegacy() {
     try {
       const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
       return Array.isArray(value) ? value.map(normalize).filter(Boolean) : [];
@@ -72,35 +75,100 @@
     }
   }
 
-  function write(tracks) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tracks));
+  tracks = readLegacy();
+
+  function changed(error = "") {
+    window.dispatchEvent(
+      new CustomEvent("skipper:favourites-changed", { detail: { error } }),
+    );
+  }
+
+  function read() {
+    return tracks.slice();
+  }
+
+  async function request(method, track) {
+    const response = await fetch(API_URL, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(track),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || "Favourites could not be updated.");
+    }
+    return data;
+  }
+
+  function load(force = false) {
+    if (loadRequest && !force) return loadRequest;
+    loadRequest = (async () => {
+      const response = await fetch(API_URL, { cache: "no-store" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !Array.isArray(data.tracks)) {
+        throw new Error(data.error || "Favourites could not be loaded.");
+      }
+      const serverTracks = data.tracks.map(normalize).filter(Boolean);
+      const legacyTracks = readLegacy().filter(
+        (track) => !serverTracks.some((item) => trackKey(item) === trackKey(track)),
+      );
+      if (legacyTracks.length) {
+        await Promise.all(legacyTracks.map((track) => request("POST", track)));
+      }
+      tracks = [...legacyTracks, ...serverTracks];
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch (_error) {
+        // Server favourites still work when Safari blocks local storage access.
+      }
+      changed();
+      return read();
+    })().catch((error) => {
+      changed(error.message);
+      return read();
+    });
+    return loadRequest;
+  }
+
+  function write(nextTracks) {
+    tracks = nextTracks;
     window.dispatchEvent(new CustomEvent("skipper:favourites-changed"));
   }
 
   function has(track) {
     const key = trackKey(track);
-    return Boolean(key && read().some((item) => trackKey(item) === key));
+    return Boolean(key && tracks.some((item) => trackKey(item) === key));
   }
 
   function toggle(track) {
     const normalized = normalize(track);
     if (!normalized) return false;
     const key = trackKey(normalized);
-    const tracks = read();
-    const index = tracks.findIndex((item) => trackKey(item) === key);
+    const previous = tracks.slice();
+    const nextTracks = tracks.slice();
+    const index = nextTracks.findIndex((item) => trackKey(item) === key);
     if (index >= 0) {
-      tracks.splice(index, 1);
-      write(tracks);
+      nextTracks.splice(index, 1);
+      write(nextTracks);
+      request("DELETE", normalized).catch((error) => {
+        write(previous);
+        changed(error.message);
+      });
       return false;
     }
-    tracks.unshift(normalized);
-    write(tracks);
+    nextTracks.unshift(normalized);
+    write(nextTracks);
+    request("POST", normalized).catch((error) => {
+      write(previous);
+      changed(error.message);
+    });
     return true;
   }
 
   window.SkipperFavourites = {
     STORAGE_KEY,
     has,
+    load,
     webSearchUrl,
     normalize,
     read,
