@@ -4,7 +4,9 @@ RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
+        libzmq3-dev \
         make \
+        pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -12,7 +14,7 @@ WORKDIR /app
 COPY Makefile ./
 COPY *.c *.h ./
 
-RUN make silencer skipper
+RUN make news_identifier news_mixer_control skipper
 
 FROM debian:bookworm-slim AS audio-runtime
 
@@ -21,6 +23,7 @@ RUN apt-get update \
         ca-certificates \
         curl \
         ffmpeg \
+        libzmq5 \
         tzdata \
     && rm -rf /var/lib/apt/lists/*
 
@@ -29,7 +32,8 @@ WORKDIR /app
 COPY radio6music_noNews_hls.sh ./
 COPY skip_6music_news.sh ./
 COPY news_schedule.ini ./
-COPY --from=build /app/silencer ./silencer
+COPY --from=build /app/news_identifier ./news_identifier
+COPY --from=build /app/news_mixer_control ./news_mixer_control
 COPY --from=build /app/skipper ./skipper
 
 FROM audio-runtime AS skipper-runtime

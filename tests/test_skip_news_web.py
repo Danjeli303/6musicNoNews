@@ -319,20 +319,20 @@ class NowPlayingTests(unittest.TestCase):
         self.assertIsNone(result["image_url"])
 
 
-class SilencerStatusTests(unittest.TestCase):
-    def test_reads_fresh_silencing_state(self):
+class NewsStatusTests(unittest.TestCase):
+    def test_reads_fresh_news_state(self):
         with tempfile.TemporaryDirectory() as output_dir:
-            path = Path(output_dir) / "silencer-status.json"
+            path = Path(output_dir) / "news-status.json"
             path.write_text(
-                '{"silencing":true,"sample":48000,"updated_at_unix":100}',
+                '{"news_active":true,"sample":48000,"updated_at_unix":100}',
                 encoding="utf-8",
             )
-            service = skip_news_web.SilencerStatusService(path, max_age_seconds=10)
+            service = skip_news_web.NewsStatusService(path, max_age_seconds=10)
 
             self.assertEqual(
                 service.get(now=105),
                 {
-                    "silencing": True,
+                    "news_active": True,
                     "sample": 48000,
                     "updated_at_unix": 100,
                     "fresh": True,
@@ -341,15 +341,15 @@ class SilencerStatusTests(unittest.TestCase):
 
     def test_treats_missing_or_stale_state_as_off(self):
         with tempfile.TemporaryDirectory() as output_dir:
-            path = Path(output_dir) / "silencer-status.json"
-            service = skip_news_web.SilencerStatusService(path, max_age_seconds=10)
-            self.assertFalse(service.get(now=105)["silencing"])
+            path = Path(output_dir) / "news-status.json"
+            service = skip_news_web.NewsStatusService(path, max_age_seconds=10)
+            self.assertFalse(service.get(now=105)["news_active"])
 
             path.write_text(
-                '{"silencing":true,"sample":1,"updated_at_unix":100}',
+                '{"news_active":true,"sample":1,"updated_at_unix":100}',
                 encoding="utf-8",
             )
-            self.assertFalse(service.get(now=111)["silencing"])
+            self.assertFalse(service.get(now=111)["news_active"])
 
 
 class ScheduleTests(unittest.TestCase):
@@ -764,15 +764,16 @@ class DeploymentTests(unittest.TestCase):
         self.assertTrue((vendor_dir / "video-js.min.css").is_file())
         self.assertTrue((vendor_dir / "LICENSE").is_file())
 
-    def test_fip_is_sample_gated_and_status_is_shared_with_web(self):
+    def test_fip_is_event_crossfaded_and_status_is_shared_with_web(self):
         script = (ROOT / "radio6music_noNews_hls.sh").read_text(encoding="utf-8")
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
-        self.assertIn('"$SILENCER" -e -g -t -x', script)
-        self.assertIn("[fip][gate]amultiply[fipgated]", script)
+        self.assertIn('"$NEWS_IDENTIFIER" -e -t -x', script)
+        self.assertIn("volume@bbc=1", script)
+        self.assertIn("volume@fip=0", script)
+        self.assertIn('"$NEWS_MIXER_CONTROL" "$NEWS_STATUS_FILE"', script)
         self.assertNotIn("sidechaincompress", script)
-        self.assertIn("SILENCER_EVENT state=on sample=", script)
-        self.assertIn("SILENCER_STATUS_FILE: /srv/hls/silencer-status.json", compose)
+        self.assertIn("NEWS_STATUS_FILE: /srv/hls/news-status.json", compose)
         self.assertIn("- hls_data:/srv/hls:ro", compose)
 
     def test_favourites_use_a_shared_lastfm_compatible_store(self):

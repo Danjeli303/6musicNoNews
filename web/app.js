@@ -231,7 +231,7 @@ function setLiveStationIdentity(track) {
   document.body.classList.toggle("is-fip-live", isFip);
   if (liveDescription) {
     liveDescription.textContent = isFip
-      ? "FIP while BBC Radio 6 Music is being silenced."
+      ? "FIP while scheduled BBC Radio 6 Music news is being replaced."
       : "BBC Radio 6 Music without scheduled news.";
   }
   if (liveOnAir) liveOnAir.lastChild.textContent = isFip ? " FIP on air" : " Live now";
@@ -327,7 +327,7 @@ function nowPlayingTrackSignature(track) {
     track.programme_image_url,
     track.show?.subtitle,
     track.source,
-    track.silencing,
+    track.news_active,
   ]);
 }
 

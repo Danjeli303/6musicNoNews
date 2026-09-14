@@ -26,7 +26,7 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 SOURCE="$WORK_DIR/source.m4a"
-SILENCER="$SCRIPT_DIR/silencer"
+NEWS_IDENTIFIER="$SCRIPT_DIR/news_identifier"
 
 require_command() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -162,7 +162,7 @@ playlist_duration() {
 }
 
 build_programs() {
-    make -C "$SCRIPT_DIR" skipper silencer >/dev/null
+    make -C "$SCRIPT_DIR" skipper news_identifier news_mixer_control >/dev/null
 }
 
 generate_source() {
@@ -332,14 +332,14 @@ run_format_conversion_checks() {
     run_skip_file_conversion_check "$WORK_DIR/source.wav"
 }
 
-run_silencer_slice() {
+run_news_identifier_slice() {
     label=$1
     offset_seconds=$2
     stream_start=$3
 
     input_pcm="$WORK_DIR/$label-input.pcm"
-    output_pcm="$WORK_DIR/$label-output.pcm"
-    log="$WORK_DIR/$label-silencer.log"
+    output_pcm="$WORK_DIR/$label-identifier-output.pcm"
+    log="$WORK_DIR/$label-news-identifier.log"
 
     ffmpeg \
       -hide_banner \
@@ -352,25 +352,28 @@ run_silencer_slice() {
       -f s16le -ar "$SAMPLE_RATE" -ac "$CHANNELS" \
       "$input_pcm"
 
-    "$SILENCER" -t -x -v20 -s"$SAMPLE_RATE" -T "$stream_start" -z "$PROGRAMME_OFFSET" -w "$SCRIPT_DIR/news_schedule.ini" < "$input_pcm" > "$output_pcm" 2>"$log"
+    "$NEWS_IDENTIFIER" -t -x -v20 -s"$SAMPLE_RATE" -T "$stream_start" -z "$PROGRAMME_OFFSET" -w "$SCRIPT_DIR/news_schedule.ini" < "$input_pcm" > "$output_pcm" 2>"$log"
 
     assert_file_nonempty "$input_pcm"
-    assert_file_nonempty "$output_pcm"
+    if [ -s "$output_pcm" ]; then
+        printf 'Error: news_identifier unexpectedly wrote audio: %s\n' "$output_pcm" >&2
+        exit 1
+    fi
     assert_log_contains "$log" 'Debug time:' 'stream-time debug evidence'
 }
 
-run_silencer_checks() {
-    run_silencer_slice news 0 "$PROGRAMME_START"
-    news_pcm="$WORK_DIR/news-output.pcm"
-    news_log="$WORK_DIR/news-silencer.log"
-    assert_log_contains "$news_log" 'Silenced [0-9]+ samples' 'scheduled silence evidence'
-    assert_pcm_all_zero "$news_pcm"
+run_news_identifier_checks() {
+    run_news_identifier_slice news 0 "$PROGRAMME_START"
+    news_log="$WORK_DIR/news-news-identifier.log"
+    assert_log_contains "$news_log" 'NEWS_EVENT schedule_on sample=' 'scheduled window event'
+    assert_log_contains "$news_log" 'NEWS_EVENT news_on sample=' 'news detection event'
 
-    run_silencer_slice music "$SLICE_SECONDS" "$MUSIC_START"
-    music_pcm="$WORK_DIR/music-output.pcm"
-    music_log="$WORK_DIR/music-silencer.log"
-    assert_log_contains "$music_log" 'Passed [0-9]+ samples' 'pass-through evidence'
-    assert_pcm_has_signal "$music_pcm"
+    run_news_identifier_slice music "$SLICE_SECONDS" "$MUSIC_START"
+    music_log="$WORK_DIR/music-news-identifier.log"
+    if grep -E 'NEWS_EVENT news_on sample=' "$music_log" >/dev/null 2>&1; then
+        printf 'Error: out-of-schedule fixture unexpectedly enabled news replacement\n' >&2
+        exit 1
+    fi
 }
 
 run_hls_mux_check() {
@@ -383,7 +386,7 @@ run_hls_mux_check() {
       -loglevel error \
       -y \
       -f s16le -ar "$SAMPLE_RATE" -ac "$CHANNELS" \
-      -i "$WORK_DIR/music-output.pcm" \
+      -i "$WORK_DIR/music-input.pcm" \
       -c:a aac \
       -b:a 128k \
       -f hls \
@@ -406,7 +409,9 @@ run_hls_mux_check() {
 run_container_packaging_checks() {
     assert_log_contains "$SCRIPT_DIR/Dockerfile" 'COPY[[:space:]]+news_schedule\.ini[[:space:]]+\./' 'news schedule image copy'
     assert_log_contains "$SCRIPT_DIR/radio6music_noNews_hls.sh" 'aac_coder[[:space:]]+"\$HLS_AAC_CODER"' 'fast HLS AAC encoder'
-    assert_log_contains "$SCRIPT_DIR/radio6music_noNews_hls.sh" '"\$SILENCER"[[:space:]]+-e' 'CPU-clock silencer schedule'
+    assert_log_contains "$SCRIPT_DIR/radio6music_noNews_hls.sh" '"\$NEWS_IDENTIFIER"[[:space:]]+-e' 'CPU-clock news schedule'
+    assert_log_contains "$SCRIPT_DIR/radio6music_noNews_hls.sh" 'volume@bbc=1' 'BBC crossfade control'
+    assert_log_contains "$SCRIPT_DIR/radio6music_noNews_hls.sh" 'volume@fip=0' 'FIP crossfade control'
     assert_log_contains "$SCRIPT_DIR/radio6music_noNews_hls.sh" 'live_start_index[[:space:]]+0' 'HLS timestamp-aligned start segment'
 }
 
@@ -422,11 +427,11 @@ main() {
     generate_source
     run_wrapper_checks
     run_format_conversion_checks
-    run_silencer_checks
+    run_news_identifier_checks
     run_hls_mux_check
     run_container_packaging_checks
 
-    printf 'OK: generated audio, wrapper checks, file conversion, scheduled silence/pass-through, HLS muxing, and container packaging checks\n'
+    printf 'OK: generated audio, wrapper checks, file conversion, scheduled news events, HLS muxing, and container packaging checks\n'
 }
 
 main "$@"

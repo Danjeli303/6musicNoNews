@@ -71,8 +71,8 @@ FIP_COVER_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
-DEFAULT_SILENCER_STATUS_FILE = (
-    BASE_DIR / "hls_radio6music_noNews" / "silencer-status.json"
+DEFAULT_NEWS_STATUS_FILE = (
+    BASE_DIR / "hls_radio6music_noNews" / "news-status.json"
 )
 BBC_6MUSIC_SCHEDULE_URL = "https://www.bbc.co.uk/sounds/schedules/bbc_6music"
 BBC_IMAGE_HOST = "ichef.bbci.co.uk"
@@ -163,7 +163,7 @@ def bbc_now_playing_from_payload(payload):
         "image_url": _bbc_image_url(item.get("image_url")),
         "source": "BBC Radio 6 Music",
         "station": "BBC Radio 6 Music",
-        "silencing": False,
+        "news_active": False,
     }
 
 
@@ -202,7 +202,7 @@ def fip_now_playing_from_payload(payload):
         "image_url": image_url,
         "source": "FIP",
         "station": "FIP",
-        "silencing": True,
+        "news_active": True,
         "programme": programme,
         "presenter": "FIP",
         "programme_image_url": programme_image_url,
@@ -294,8 +294,8 @@ class FIPNowPlayingService:
             return dict(result)
 
 
-class SilencerStatusService:
-    """Read the streamer's atomic silencer-state file."""
+class NewsStatusService:
+    """Read the streamer's atomic scheduled-news state file."""
 
     def __init__(self, path, max_age_seconds=600):
         self.path = Path(path).resolve()
@@ -309,13 +309,13 @@ class SilencerStatusService:
             current_time = time.time() if now is None else float(now)
             fresh = 0 <= current_time - updated_at <= self.max_age_seconds
             return {
-                "silencing": payload.get("silencing") is True and fresh,
+                "news_active": payload.get("news_active") is True and fresh,
                 "sample": sample,
                 "updated_at_unix": updated_at,
                 "fresh": fresh,
             }
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
-            return {"silencing": False, "fresh": False}
+            return {"news_active": False, "fresh": False}
 
 
 class FavouriteStore:
@@ -1394,8 +1394,8 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
         elif path == "/api/jobs":
             self._send_json(HTTPStatus.OK, self.server.job_store.list_jobs())
         elif path == "/api/now-playing":
-            silencer = self.server.silencer_status_service.get()
-            if silencer["silencing"]:
+            news = self.server.news_status_service.get()
+            if news["news_active"]:
                 try:
                     payload = self.server.fip_now_playing_service.get()
                 except NOW_PLAYING_FETCH_ERRORS:
@@ -1404,7 +1404,7 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
                         "now_playing": False,
                         "source": "FIP",
                         "station": "FIP",
-                        "silencing": True,
+                        "news_active": True,
                         "show": {
                             "available": True,
                             "title": "FIP",
@@ -1424,7 +1424,7 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
                         "now_playing": False,
                         "source": "BBC Radio 6 Music",
                         "station": "BBC Radio 6 Music",
-                        "silencing": False,
+                        "news_active": False,
                     }
                 try:
                     programme = self.server.schedule_service.get()
@@ -1444,7 +1444,7 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
                             "programme_image_url": programme["image_url"],
                         }
                     )
-            payload["silencer"] = silencer
+            payload["news"] = news
             payload["display_delay_seconds"] = self.server.now_playing_delay_seconds
             self._send_json(HTTPStatus.OK, payload)
         elif path == "/api/favourites":
@@ -1550,11 +1550,11 @@ class SkipNewsServer(ThreadingHTTPServer):
         self.fip_now_playing_service = FIPNowPlayingService(
             os.environ.get("FIP_NOW_PLAYING_URL", FIP_NOW_PLAYING_URL)
         )
-        self.silencer_status_service = SilencerStatusService(
+        self.news_status_service = NewsStatusService(
             os.environ.get(
-                "SILENCER_STATUS_FILE", str(DEFAULT_SILENCER_STATUS_FILE)
+                "NEWS_STATUS_FILE", str(DEFAULT_NEWS_STATUS_FILE)
             ),
-            os.environ.get("SILENCER_STATUS_MAX_AGE_SECONDS", "600"),
+            os.environ.get("NEWS_STATUS_MAX_AGE_SECONDS", "600"),
         )
         self.schedule_service = BBCScheduleService(
             job_store.output_dir / ".get_iplayer_schedule",
