@@ -103,12 +103,7 @@ static int transition_for_event(NewsEvent event, int *schedule_active,
         return 1;
     } else if (event == EVENT_SCHEDULE_OFF) {
         *schedule_active = 0;
-        if (*news_active) {
-            *news_active = 0;
-            return 0;
-        }
-    } else if (event == EVENT_NEWS_OFF && *news_active && !*schedule_active) {
-        /* Unscheduled operation has no schedule_off event to close the gate. */
+    } else if (event == EVENT_NEWS_OFF && *news_active) {
         *news_active = 0;
         return 0;
     }

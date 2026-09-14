@@ -151,7 +151,7 @@ typedef struct {
 typedef struct {
     const ProgramConfig *config;
     ProgramState *state;
-} SilencingEventCall;
+} NewsEventCall;
 
 typedef struct {
     const ProgramConfig *config;
@@ -1428,7 +1428,7 @@ static void test_program_main_emits_no_audio(void)
 
 static void call_report_news_transitions(void *context)
 {
-    SilencingEventCall *call = (SilencingEventCall *)context;
+    NewsEventCall *call = (NewsEventCall *)context;
 
     report_news_state(call->config, call->state, 1);
     call->state->samples_output_audible = 12;
@@ -1439,11 +1439,11 @@ static void call_report_news_transitions(void *context)
     report_news_state(call->config, call->state, 0);
 }
 
-static void test_news_latches_until_schedule_off(void)
+static void test_news_off_precedes_schedule_off(void)
 {
     ProgramConfig config;
     ProgramState state;
-    SilencingEventCall call = { &config, &state };
+    NewsEventCall call = { &config, &state };
     char *events;
 
     config = config_with_stream_time("2026-06-19T12:00:00Z", 0);
@@ -1458,8 +1458,8 @@ static void test_news_latches_until_schedule_off(void)
         EXPECT_STREQ(
             "NEWS_EVENT schedule_on sample=0 delay_ms=22000\n"
             "NEWS_EVENT news_on sample=0 delay_ms=22000\n"
-            "NEWS_EVENT schedule_off sample=360 delay_ms=0\n"
-            "NEWS_EVENT news_off sample=360 delay_ms=0\n",
+            "NEWS_EVENT news_off sample=12 delay_ms=22000\n"
+            "NEWS_EVENT schedule_off sample=360 delay_ms=0\n",
             events);
     }
     free(events);
@@ -1492,7 +1492,7 @@ int main(void)
     test_write_confirmed_audio_keepalive();
     test_flush_remaining_audio();
     test_program_main_emits_no_audio();
-    test_news_latches_until_schedule_off();
+    test_news_off_precedes_schedule_off();
 
     if (tests_failed) {
         fprintf(stderr, "%d of %d news identifier tests failed\n", tests_failed, tests_run);

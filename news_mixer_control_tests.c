@@ -52,7 +52,7 @@ static void test_crossfade_levels(void)
     EXPECT_NEAR(0.0, fip);
 }
 
-static void test_schedule_controls_return_to_bbc(void)
+static void test_news_off_controls_return_to_bbc(void)
 {
     int schedule_active = 0;
     int news_active = 0;
@@ -63,11 +63,11 @@ static void test_schedule_controls_return_to_bbc(void)
     EXPECT_EQ_INT(1, transition_for_event(EVENT_NEWS_ON,
                                           &schedule_active, &news_active));
     EXPECT_TRUE(news_active);
-    EXPECT_EQ_INT(-1, transition_for_event(EVENT_NEWS_OFF,
-                                           &schedule_active, &news_active));
-    EXPECT_TRUE(news_active);
-    EXPECT_EQ_INT(0, transition_for_event(EVENT_SCHEDULE_OFF,
+    EXPECT_EQ_INT(0, transition_for_event(EVENT_NEWS_OFF,
                                           &schedule_active, &news_active));
+    EXPECT_TRUE(!news_active);
+    EXPECT_EQ_INT(-1, transition_for_event(EVENT_SCHEDULE_OFF,
+                                           &schedule_active, &news_active));
     EXPECT_TRUE(!schedule_active);
     EXPECT_TRUE(!news_active);
 }
@@ -76,7 +76,7 @@ int main(void)
 {
     test_parse_events();
     test_crossfade_levels();
-    test_schedule_controls_return_to_bbc();
+    test_news_off_controls_return_to_bbc();
     if (tests_failed) {
         fprintf(stderr, "%d of %d mixer control tests failed\n", tests_failed, tests_run);
         return 1;

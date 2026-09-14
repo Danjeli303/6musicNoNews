@@ -1140,7 +1140,7 @@ static void report_news_state(const ProgramConfig *config, ProgramState *state, 
         state->schedule_event_state = schedule_active;
     }
 
-    if (!schedule_active && state->news_event_state) {
+    if ((!schedule_active || !news_detected) && state->news_event_state) {
         state->news_event_state = 0;
         fprintf(stderr, "NEWS_EVENT news_off sample=%lld delay_ms=%d\n",
                 (long long)output_sample, delay_milliseconds);

@@ -190,11 +190,11 @@ The live script sends a copy of decoded BBC PCM to `news_identifier`. FFmpeg
 delays only the untouched BBC branch by the classifier look-ahead; FIP remains
 live and current. The identifier emits `NEWS_EVENT` lines on standard error.
 `news_mixer_control` applies those events to named FFmpeg volume filters over
-ZeroMQ: `news_on` fades BBC out and FIP in, and `schedule_off` fades FIP out and
-BBC back in. Keeping FIP active for the complete scheduled window prevents a
-brief return to BBC audio when the classifier hears music at the end of a
-bulletin. The controller atomically writes `news-status.json`, which tells the
-web service when to show FIP programme, track, and artwork metadata.
+ZeroMQ: `news_on` fades BBC out and FIP in, and `news_off` fades FIP out and BBC
+back in. Schedule events describe the configured bulletin window but do not
+hold the audio gate open. The controller atomically writes `news-status.json`,
+which tells the web service when to show FIP programme, track, and artwork
+metadata.
 
 AWS deployment notes are in [docs/aws-deploy.md](docs/aws-deploy.md). The Alexa
 skill scaffold is in [alexa-skill/README.md](alexa-skill/README.md).
