@@ -15,25 +15,39 @@
   </head>
   <body>
     <header class="site-header">
-      <div class="utility-bar">
-        <div class="utility-inner">
-          <a class="block-logo" href="/" aria-label="6 Music News Skipper home">
-            <b>6</b><b>M</b><b>N</b>
-          </a>
-          <span class="utility-name">6 Music News Skipper</span>
-          <span class="unofficial">Unofficial utility</span>
-        </div>
-      </div>
       <div class="sounds-bar">
         <div class="sounds-inner">
-          <a class="sounds-logo" href="/">
-            <span class="sound-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-            <strong>SOUNDS SKIPPER</strong>
-          </a>
+          <div class="header-now-playing" aria-live="polite" aria-atomic="true">
+            <div class="header-artwork">
+              <img id="now-playing-image" alt="" hidden />
+              <span id="now-playing-image-fallback" aria-hidden="true">6</span>
+            </div>
+            <div class="header-track-copy">
+              <p id="now-playing-label">Now playing</p>
+              <a id="now-playing-title" class="track-search-link">Finding the current track…</a>
+              <span id="now-playing-artist">BBC Radio 6 Music</span>
+            </div>
+            <button
+              id="header-radio-toggle"
+              class="header-radio-toggle"
+              type="button"
+              aria-label="Play live radio"
+              title="Play live radio"
+            ><span aria-hidden="true">▶</span></button>
+            <button
+              id="now-playing-favourite"
+              class="favourite-button header-favourite"
+              type="button"
+              aria-label="Add the current track to favourites"
+              title="Add to favourites"
+              disabled
+            ><span aria-hidden="true">♡</span></button>
+          </div>
           <nav aria-label="Primary navigation">
             <a class="active" href="#live-stream" aria-current="page">Live Stream</a>
             <a href="#process">Process</a>
             <a href="#programmes">Programmes</a>
+            <a href="#favourites">Favourites</a>
           </nav>
         </div>
       </div>
@@ -53,16 +67,24 @@
               <b>MUSIC</b>
             </div>
             <div class="player-area">
-              <div id="now-playing" class="now-playing" aria-live="polite" aria-atomic="true">
+              <div class="now-playing" aria-live="polite" aria-atomic="true">
                 <div class="now-playing-artwork">
-                  <img id="now-playing-image" alt="" hidden />
-                  <span id="now-playing-image-fallback" aria-hidden="true">6</span>
+                  <img id="live-now-playing-image" alt="" hidden />
+                  <span id="live-now-playing-image-fallback" aria-hidden="true">6</span>
                 </div>
                 <div class="now-playing-copy">
-                  <p id="now-playing-label">Now playing</p>
-                  <strong id="now-playing-title">Finding the current track…</strong>
-                  <span id="now-playing-artist">BBC Radio 6 Music</span>
+                  <p id="live-now-playing-label">Now playing</p>
+                  <a id="live-now-playing-title" class="track-search-link">Finding the current track…</a>
+                  <span id="live-now-playing-artist">BBC Radio 6 Music</span>
                 </div>
+                <button
+                  id="live-now-playing-favourite"
+                  class="favourite-button"
+                  type="button"
+                  aria-label="Add the current track to favourites"
+                  title="Add to favourites"
+                  disabled
+                ><span aria-hidden="true">♡</span></button>
               </div>
               <audio
                 id="live-radio-player"
@@ -168,9 +190,23 @@
           <p id="library-message" class="library-message" aria-live="polite"></p>
         </section>
 
+        <section id="favourites" class="favourites-page" aria-labelledby="favourites-title">
+          <div class="favourites-heading">
+            <div>
+              <p class="eyebrow">Your library</p>
+              <h2 id="favourites-title">Favourite tracks</h2>
+              <p>Tracks saved from live radio and processed programmes.</p>
+            </div>
+          </div>
+          <div id="favourites-list" class="favourites-list"></div>
+          <p id="favourites-empty" class="empty-state">No favourites yet. Use the heart beside a playing track to add one.</p>
+        </section>
+
       </div>
     </main>
     <script src="/vendor/video.js/video.min.js" defer></script>
+    <script src="/favourites.js" defer></script>
+    <script src="/favourites-page.js" defer></script>
     <script src="/app.js" defer></script>
   </body>
 </html>

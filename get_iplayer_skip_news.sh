@@ -72,6 +72,7 @@ printf 'Downloading BBC Sounds programme %s...\n' "$PID"
     --type=radio \
     --force \
     --radio-quality=high,std,med,low \
+    --tracklist \
     --log-progress \
     --profile-dir="$PROFILE_DIR" \
     --output="$WORK_DIR" \
@@ -112,6 +113,11 @@ printf 'Removing scheduled news from %s...\n' "$(basename -- "$DOWNLOADED_FILE")
 if [ ! -s "$OUTPUT_FILE" ]; then
     printf 'Error: news-skipping completed without creating an output file.\n' >&2
     exit 1
+fi
+
+TRACKLIST_FILE="$WORK_DIR/$PID.tracks.txt"
+if [ -s "$TRACKLIST_FILE" ]; then
+    cp "$TRACKLIST_FILE" "${OUTPUT_FILE%.*}.tracks.txt"
 fi
 
 COMPLETED=1

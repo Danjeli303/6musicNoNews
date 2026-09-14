@@ -26,6 +26,18 @@ const nowPlayingImage = document.querySelector("#now-playing-image");
 const nowPlayingImageFallback = document.querySelector(
   "#now-playing-image-fallback",
 );
+const nowPlayingFavourite = document.querySelector("#now-playing-favourite");
+const headerRadioToggle = document.querySelector("#header-radio-toggle");
+const liveNowPlayingLabel = document.querySelector("#live-now-playing-label");
+const liveNowPlayingTitle = document.querySelector("#live-now-playing-title");
+const liveNowPlayingArtist = document.querySelector("#live-now-playing-artist");
+const liveNowPlayingImage = document.querySelector("#live-now-playing-image");
+const liveNowPlayingImageFallback = document.querySelector(
+  "#live-now-playing-image-fallback",
+);
+const liveNowPlayingFavourite = document.querySelector(
+  "#live-now-playing-favourite",
+);
 
 let pollTimer;
 let displayedJobId;
@@ -36,14 +48,198 @@ let nowPlayingSignature = "";
 let nowPlayingRequestInFlight = false;
 let nowPlayingQueueTimer;
 let nowPlayingHasTrack = false;
+let currentLiveTrack;
 let pendingNowPlayingSignature = "";
+let activeMediaPlayer;
+let activeHeaderEntry;
+let showingProgrammeContext = false;
 const historyPlayers = new Map();
 
+function updateHeaderRadioToggle(isPlaying, source = "live radio") {
+  if (!headerRadioToggle) return;
+  headerRadioToggle.classList.toggle("is-playing", isPlaying);
+  headerRadioToggle.querySelector("span").textContent = isPlaying ? "■" : "▶";
+  const action = isPlaying ? "Stop" : "Play";
+  headerRadioToggle.title = `${action} ${source}`;
+  headerRadioToggle.setAttribute("aria-label", `${action} ${source}`);
+}
+
+function alternateHeaderMetadata() {
+  if (activeHeaderEntry && activeMediaPlayer === activeHeaderEntry.player) {
+    showingProgrammeContext = !showingProgrammeContext;
+    renderHeaderHistory(activeHeaderEntry, showingProgrammeContext);
+    return;
+  }
+  if (!nowPlayingHasTrack || !currentLiveTrack) return;
+  showingProgrammeContext = !showingProgrammeContext;
+  if (showingProgrammeContext) {
+    nowPlayingLabel.textContent = "Live programme";
+    nowPlayingTitle.textContent = currentLiveTrack.programme || "BBC Radio 6 Music";
+    nowPlayingTitle.removeAttribute("href");
+    nowPlayingTitle.removeAttribute("target");
+    nowPlayingTitle.removeAttribute("rel");
+    nowPlayingArtist.textContent = currentLiveTrack.presenter || "News-skipped live stream";
+  } else {
+    renderNowPlaying(currentLiveTrack, true);
+  }
+}
+
+function mediaSessionAvailable() {
+  return (
+    "mediaSession" in navigator &&
+    typeof window.MediaMetadata === "function"
+  );
+}
+
+function mediaArtwork(track, fallbackArtwork) {
+  const source = track?.image_url || fallbackArtwork;
+  if (!source) return [];
+  try {
+    return [{ src: new URL(source, window.location.href).href }];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function mediaAlbum(track, fallbackAlbum, fallbackPresenter) {
+  const programme = track?.programme || fallbackAlbum || "BBC Radio 6 Music";
+  const presenter = track?.presenter || fallbackPresenter;
+  return presenter && presenter !== programme
+    ? `${programme} · ${presenter}`
+    : programme;
+}
+
+function updateSystemMediaMetadata(track, options = {}) {
+  if (!mediaSessionAvailable() || (!track && !options.title)) return;
+  const item = track || {};
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: item.title || item.name || options.title || "BBC Radio 6 Music",
+      artist:
+        item.artist?.name ||
+        item.artist ||
+        options.artist ||
+        "BBC Radio 6 Music",
+      album: mediaAlbum(item, options.album, options.presenter),
+      artwork: mediaArtwork(item, options.artwork),
+    });
+  } catch (_error) {
+    // Safari versions without full MediaMetadata support retain native controls.
+  }
+}
+
+function updateSystemPlaybackState(state) {
+  if (!mediaSessionAvailable()) return;
+  try {
+    navigator.mediaSession.playbackState = state;
+  } catch (_error) {
+    // Some older Safari releases expose Media Session without playbackState.
+  }
+}
+
+function clearSystemPositionState() {
+  if (!mediaSessionAvailable() || !navigator.mediaSession.setPositionState) return;
+  try {
+    navigator.mediaSession.setPositionState();
+  } catch (_error) {
+    // Position state is optional and is not available in every Safari release.
+  }
+}
+
+function updateSystemPositionState(player) {
+  if (!mediaSessionAvailable() || !navigator.mediaSession.setPositionState) return;
+  const duration = Number(player.duration());
+  const position = Number(player.currentTime());
+  const playbackRate = Number(player.playbackRate());
+  if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(position)) {
+    return;
+  }
+  try {
+    navigator.mediaSession.setPositionState({
+      duration,
+      playbackRate: Number.isFinite(playbackRate) ? playbackRate : 1,
+      position: Math.max(0, Math.min(duration, position)),
+    });
+  } catch (_error) {
+    // Lock-screen seeking remains optional when the browser rejects this state.
+  }
+}
+
+function showArtworkFallback(image, fallback) {
+  image.hidden = true;
+  image.removeAttribute("src");
+  image.alt = "";
+  fallback.hidden = false;
+}
+
+function showArtwork(image, fallback, source, alt) {
+  if (!source) {
+    showArtworkFallback(image, fallback);
+    return;
+  }
+  image.onload = () => {
+    image.hidden = false;
+    fallback.hidden = true;
+  };
+  image.onerror = () => showArtworkFallback(image, fallback);
+  image.alt = alt;
+  image.src = source;
+}
+
+function setTrackLink(element, track, fallback) {
+  element.textContent = track?.title || track?.name || fallback;
+  if (track && (track.title || track.name)) {
+    element.href = window.SkipperFavourites.webSearchUrl(track);
+    element.target = "_blank";
+    element.rel = "noopener";
+  } else {
+    element.removeAttribute("href");
+    element.removeAttribute("target");
+    element.removeAttribute("rel");
+  }
+}
+
+function renderLiveNowPlaying(track) {
+  if (!track.available) {
+    liveNowPlayingLabel.textContent = "Now playing";
+    setTrackLink(liveNowPlayingTitle, undefined, "Track information unavailable");
+    liveNowPlayingArtist.textContent = "BBC Radio 6 Music";
+    showArtworkFallback(liveNowPlayingImage, liveNowPlayingImageFallback);
+    updateFavouriteButton(liveNowPlayingFavourite, undefined);
+    return;
+  }
+  liveNowPlayingLabel.textContent = track.now_playing
+    ? "Now playing"
+    : "Recently played";
+  setTrackLink(liveNowPlayingTitle, track, "Title unavailable");
+  liveNowPlayingArtist.textContent = track.artist || "BBC Radio 6 Music";
+  showArtwork(
+    liveNowPlayingImage,
+    liveNowPlayingImageFallback,
+    track.image_url,
+    `Artwork for ${liveNowPlayingArtist.textContent} – ${liveNowPlayingTitle.textContent}`,
+  );
+  updateFavouriteButton(liveNowPlayingFavourite, track);
+}
+
+function renderHeaderHistory(entry, programmeOnly = false) {
+  const track = programmeOnly ? undefined : entry.currentTrack;
+  showingProgrammeContext = programmeOnly;
+  nowPlayingLabel.textContent = track ? "Playing track" : "Playing programme";
+  setTrackLink(nowPlayingTitle, track, entry.album || entry.title);
+  nowPlayingArtist.textContent = track?.artist || entry.presenter || entry.artist || "BBC Sounds";
+  showArtwork(
+    nowPlayingImage,
+    nowPlayingImageFallback,
+    track?.image_url || entry.artwork,
+    `Artwork for ${entry.title}`,
+  );
+  updateFavouriteButton(nowPlayingFavourite, track);
+  updateHeaderRadioToggle(!entry.player.paused(), entry.title);
+}
+
 function showNowPlayingFallback() {
-  nowPlayingImage.hidden = true;
-  nowPlayingImage.removeAttribute("src");
-  nowPlayingImage.alt = "";
-  nowPlayingImageFallback.hidden = false;
+  showArtworkFallback(nowPlayingImage, nowPlayingImageFallback);
 }
 
 function nowPlayingTrackSignature(track) {
@@ -56,37 +252,58 @@ function nowPlayingTrackSignature(track) {
   ]);
 }
 
-function renderNowPlaying(track) {
+function renderNowPlaying(track, force = false) {
   const signature = nowPlayingTrackSignature(track);
-  if (signature === nowPlayingSignature) return;
+  if (!force && signature === nowPlayingSignature) return;
   nowPlayingSignature = signature;
+  showingProgrammeContext = false;
+  renderLiveNowPlaying(track);
 
   if (!track.available) {
     nowPlayingHasTrack = false;
+    currentLiveTrack = undefined;
+    if (activeHeaderEntry && activeMediaPlayer === activeHeaderEntry.player) return;
     nowPlayingLabel.textContent = "Now playing";
     nowPlayingTitle.textContent = "Track information unavailable";
     nowPlayingArtist.textContent = "BBC Radio 6 Music";
     showNowPlayingFallback();
+    updateFavouriteButton(nowPlayingFavourite, undefined);
     return;
   }
 
   nowPlayingHasTrack = true;
+  currentLiveTrack = track;
+  if (activeHeaderEntry && activeMediaPlayer === activeHeaderEntry.player) return;
   nowPlayingLabel.textContent = track.now_playing
     ? "Now playing"
     : "Recently played";
-  nowPlayingTitle.textContent = track.title || "Title unavailable";
+  setTrackLink(nowPlayingTitle, track, "Title unavailable");
   nowPlayingArtist.textContent = track.artist || "BBC Radio 6 Music";
-  if (track.image_url) {
-    nowPlayingImage.onload = () => {
-      nowPlayingImage.hidden = false;
-      nowPlayingImageFallback.hidden = true;
-    };
-    nowPlayingImage.onerror = showNowPlayingFallback;
-    nowPlayingImage.alt = `Artwork for ${nowPlayingArtist.textContent} – ${nowPlayingTitle.textContent}`;
-    nowPlayingImage.src = track.image_url;
-  } else {
-    showNowPlayingFallback();
+  showArtwork(
+    nowPlayingImage,
+    nowPlayingImageFallback,
+    track.image_url,
+    `Artwork for ${nowPlayingArtist.textContent} – ${nowPlayingTitle.textContent}`,
+  );
+  updateFavouriteButton(nowPlayingFavourite, track);
+  if (activeMediaPlayer === radioPlayer) {
+    updateSystemMediaMetadata(track);
   }
+}
+
+function updateFavouriteButton(button, track) {
+  if (!button) return;
+  const available = Boolean(track && (track.title || track.name));
+  const isFavourite = available && window.SkipperFavourites.has(track);
+  button.disabled = !available;
+  button.classList.toggle("is-favourite", isFavourite);
+  button.querySelector("span").textContent = isFavourite ? "♥" : "♡";
+  const action = isFavourite ? "Remove from" : "Add to";
+  const description = track
+    ? `${track.title || track.name} by ${track.artist?.name || track.artist || "unknown artist"}`
+    : "the current track";
+  button.title = `${action} favourites`;
+  button.setAttribute("aria-label", `${action} favourites: ${description}`);
 }
 
 function queueNowPlaying(track) {
@@ -175,18 +392,33 @@ function initialiseRadioPlayer() {
 
   radioPlayer.on("play", () => {
     enforceExclusivePlayback(radioPlayer);
+    activeMediaPlayer = radioPlayer;
+    activeHeaderEntry = undefined;
+    if (currentLiveTrack) renderNowPlaying(currentLiveTrack, true);
+    updateSystemMediaMetadata(currentLiveTrack);
+    clearSystemPositionState();
+    updateSystemPlaybackState("playing");
     radioStatus.textContent = "Connecting to the live stream…";
+    updateHeaderRadioToggle(true);
   });
   radioPlayer.on("playing", () => {
+    updateSystemPlaybackState("playing");
     radioStatus.textContent = "Playing live · News-skipped stream";
   });
   radioPlayer.on("waiting", () => {
     radioStatus.textContent = "Reconnecting to the live stream…";
   });
   radioPlayer.on("pause", () => {
+    if (activeMediaPlayer === radioPlayer) {
+      updateSystemPlaybackState("paused");
+    }
     radioStatus.textContent = "Live stream paused.";
+    updateHeaderRadioToggle(false);
   });
   radioPlayer.on("error", () => {
+    if (activeMediaPlayer === radioPlayer) {
+      updateSystemPlaybackState("none");
+    }
     radioStatus.textContent =
       "The live stream is temporarily unavailable. Try again shortly.";
   });
@@ -281,6 +513,20 @@ function createProcessItem(job, isActive) {
 
     if (job.status === "complete" && job.media_url) {
       const playerWrap = makeElement("div", "history-player-wrap");
+      const trackInfo = makeElement("div", "offline-now-playing");
+      trackInfo.dataset.trackInfoId = job.id;
+      trackInfo.hidden = true;
+      const trackCopy = makeElement("div", "offline-track-copy");
+      trackCopy.append(
+        makeElement("p", "offline-track-label", "Playing track"),
+        makeElement("a", "offline-track-title track-search-link", ""),
+        makeElement("span", "offline-track-artist", ""),
+      );
+      const favourite = makeElement("button", "favourite-button");
+      favourite.type = "button";
+      favourite.dataset.trackFavouriteId = job.id;
+      favourite.append(makeElement("span", "", "♡"));
+      trackInfo.append(trackCopy, favourite);
       const audio = makeElement("audio", "video-js history-audio");
       audio.id = `history-audio-${job.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
       audio.controls = true;
@@ -295,7 +541,7 @@ function createProcessItem(job, isActive) {
         "Ready to play.",
       );
       playerStatus.dataset.playerStatusId = job.id;
-      playerWrap.append(audio, playerStatus);
+      playerWrap.append(trackInfo, audio, playerStatus);
       programme.append(playerWrap);
     }
 
@@ -369,7 +615,11 @@ function initialiseHistoryPlayers(history) {
     const status = historyJobs.querySelector(
       `[data-player-status-id="${job.id}"]`,
     );
-    if (!button || !status || !document.getElementById(audioId)) return;
+    const trackInfo = historyJobs.querySelector(`[data-track-info-id="${job.id}"]`);
+    const favourite = historyJobs.querySelector(
+      `[data-track-favourite-id="${job.id}"]`,
+    );
+    if (!button || !status || !trackInfo || !favourite || !document.getElementById(audioId)) return;
 
     const title = job.display_title || job.title || job.filename || "programme";
     const player = window.videojs(audioId, {
@@ -379,8 +629,68 @@ function initialiseHistoryPlayers(history) {
       preload: "none",
       responsive: true,
     });
-    const entry = { player, button, status, title };
+    const entry = {
+      player,
+      button,
+      status,
+      title,
+      trackInfo,
+      favourite,
+      tracks: Array.isArray(job.tracks) ? job.tracks : [],
+      artwork: job.artwork_url,
+      album: job.album,
+      presenter: job.title,
+      artist: job.artist,
+      currentTrack: undefined,
+      trackSignature: "",
+    };
     historyPlayers.set(job.id, entry);
+
+    const renderPlayingTrack = () => {
+      const currentTime = player.currentTime();
+      const track = entry.tracks.find((candidate) => {
+        const start = Number(candidate.start_seconds);
+        const end = Number(candidate.end_seconds);
+        return Number.isFinite(start) && currentTime >= start && (!Number.isFinite(end) || currentTime < end);
+      });
+      const signature = track
+        ? JSON.stringify([track.artist, track.title, track.start_seconds])
+        : "";
+      if (signature === entry.trackSignature) return;
+      entry.trackSignature = signature;
+      entry.currentTrack = track;
+      entry.trackInfo.hidden = !track;
+      if (!track) {
+        if (activeMediaPlayer === player) {
+          updateSystemMediaMetadata(undefined, entry);
+          renderHeaderHistory(entry, true);
+        }
+        return;
+      }
+      const trackTitle = entry.trackInfo.querySelector(".offline-track-title");
+      const trackArtist = entry.trackInfo.querySelector(".offline-track-artist");
+      trackTitle.textContent = track.title || "Title unavailable";
+      trackTitle.href = window.SkipperFavourites.webSearchUrl(track);
+      trackTitle.target = "_blank";
+      trackTitle.rel = "noopener";
+      trackArtist.textContent = track.artist || "Artist unavailable";
+      updateFavouriteButton(entry.favourite, track);
+      if (activeMediaPlayer === player) {
+        updateSystemMediaMetadata(track, entry);
+        renderHeaderHistory(entry, false);
+      }
+    };
+
+    favourite.addEventListener("click", () => {
+      if (!entry.currentTrack) return;
+      window.SkipperFavourites.toggle(entry.currentTrack);
+      updateFavouriteButton(favourite, entry.currentTrack);
+    });
+    player.on("timeupdate", renderPlayingTrack);
+    player.on("timeupdate", () => {
+      if (activeMediaPlayer === player) updateSystemPositionState(player);
+    });
+    player.on("seeked", renderPlayingTrack);
 
     button.addEventListener("click", () => {
       if (player.paused()) {
@@ -396,20 +706,42 @@ function initialiseHistoryPlayers(history) {
     });
     player.on("play", () => {
       enforceExclusivePlayback(player);
+      activeMediaPlayer = player;
+      activeHeaderEntry = entry;
+      renderPlayingTrack();
+      renderHeaderHistory(entry, !entry.currentTrack);
+      updateSystemMediaMetadata(entry.currentTrack, {
+        title: entry.title,
+        artist: entry.artist,
+        album: entry.album,
+        presenter: entry.presenter,
+        artwork: entry.artwork,
+      });
+      updateSystemPlaybackState("playing");
       button.classList.add("is-playing");
       button.setAttribute("aria-label", `Stop ${title}`);
       status.textContent = "Starting…";
     });
     player.on("playing", () => {
+      updateSystemPlaybackState("playing");
+      updateSystemPositionState(player);
       status.textContent = "Playing now.";
     });
     player.on("pause", () => {
+      if (activeMediaPlayer === player) {
+        updateSystemPlaybackState("paused");
+        updateSystemPositionState(player);
+        updateHeaderRadioToggle(false, entry.title);
+      }
       button.classList.remove("is-playing");
       button.setAttribute("aria-label", `Play ${title}`);
       if (status.textContent !== "Stopped.") status.textContent = "Paused.";
     });
     player.on("ended", () => stopHistoryPlayer(entry));
     player.on("error", () => {
+      if (activeMediaPlayer === player) {
+        updateSystemPlaybackState("none");
+      }
       button.classList.remove("is-playing");
       button.setAttribute("aria-label", `Play ${title}`);
       status.textContent = "This programme could not be played.";
@@ -428,6 +760,7 @@ function libraryHistorySignature(history) {
       job.artwork_url,
       job.media_url,
       job.file_size,
+      job.tracks,
     ]),
   );
 }
@@ -585,8 +918,57 @@ historyJobs.addEventListener("click", async (event) => {
   }
 });
 
+nowPlayingFavourite.addEventListener("click", () => {
+  const track = activeHeaderEntry?.currentTrack || currentLiveTrack;
+  if (!track) return;
+  window.SkipperFavourites.toggle(track);
+  updateFavouriteButton(nowPlayingFavourite, track);
+});
+
+liveNowPlayingFavourite.addEventListener("click", () => {
+  if (!currentLiveTrack) return;
+  window.SkipperFavourites.toggle(currentLiveTrack);
+  updateFavouriteButton(liveNowPlayingFavourite, currentLiveTrack);
+});
+
+headerRadioToggle.addEventListener("click", () => {
+  const player = activeHeaderEntry?.player || radioPlayer;
+  if (!player) return;
+  if (player.paused()) {
+    const playPromise = player.play();
+    if (playPromise?.catch) playPromise.catch(() => updateHeaderRadioToggle(false));
+  } else if (activeHeaderEntry) {
+    stopHistoryPlayer(activeHeaderEntry);
+  } else {
+    player.pause();
+  }
+});
+
+window.addEventListener("storage", () => {
+  updateFavouriteButton(
+    nowPlayingFavourite,
+    activeHeaderEntry?.currentTrack || currentLiveTrack,
+  );
+  updateFavouriteButton(liveNowPlayingFavourite, currentLiveTrack);
+  historyPlayers.forEach((entry) => {
+    updateFavouriteButton(entry.favourite, entry.currentTrack);
+  });
+});
+
+window.addEventListener("skipper:favourites-changed", () => {
+  updateFavouriteButton(
+    nowPlayingFavourite,
+    activeHeaderEntry?.currentTrack || currentLiveTrack,
+  );
+  updateFavouriteButton(liveNowPlayingFavourite, currentLiveTrack);
+  historyPlayers.forEach((entry) => {
+    updateFavouriteButton(entry.favourite, entry.currentTrack);
+  });
+});
+
 initialiseRadioPlayer();
 loadNowPlaying();
 loadJobs();
 setInterval(loadNowPlaying, 5000);
+setInterval(alternateHeaderMetadata, 7000);
 setInterval(loadJobs, 2000);

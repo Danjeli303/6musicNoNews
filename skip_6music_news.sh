@@ -501,7 +501,7 @@ SKIPPER_LOG="$PROGRESS_DIR/skipper.log"
 ENCODE_LOG="$PROGRESS_DIR/encode.log"
 DECODE_STATUS_FILE="$PROGRESS_DIR/decode.status"
 SKIPPER_STATUS_FILE="$PROGRESS_DIR/skipper.status"
-: >"$LOG"
+printf 'sample rate = %s\n' "$INPUT_SAMPLE_RATE" >"$LOG"
 
 # POSIX sh reports only the final command's pipeline status, so record the
 # decoder and skipper statuses separately.
@@ -515,7 +515,7 @@ if run_pipeline_stage "$DECODE_STATUS_FILE" "$DECODE_LOG" \
       -vn \
       -f s16le -ar "$INPUT_SAMPLE_RATE" -ac "$INPUT_CHANNELS" pipe:1 | \
   run_pipeline_stage "$SKIPPER_STATUS_FILE" "$SKIPPER_LOG" \
-    "$SKIPPER" -t -x -w "$SKIPPER_WINDOW" -s"$INPUT_SAMPLE_RATE" -c"$INPUT_CHANNELS" -T "$START_TIME" -z "$UTC_OFFSET" | \
+    "$SKIPPER" -v -t -x -w "$SKIPPER_WINDOW" -s"$INPUT_SAMPLE_RATE" -c"$INPUT_CHANNELS" -T "$START_TIME" -z "$UTC_OFFSET" | \
   ffmpeg \
       -hide_banner \
       -loglevel warning \

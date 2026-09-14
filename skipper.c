@@ -106,6 +106,7 @@ static int is_time_restricted_skip_active (int stream_time_enabled, int64_t stre
 static int is_time_restricted_analysis_active (int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window);
 static int should_skip_mode_at_time (int skip_mode, int mode, int time_restricted_skip_enabled, int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window);
 static void write_passthrough_audio (const int16_t *input_buffer, int input_samples, int channels, int16_t *stereo_buffer);
+static void log_timeline_checkpoint (int64_t samples_written, int64_t samples_discarded);
 static void display_histogram (const char *name, int *histogram, int count);
 static void display_analysis_results (void);
 
@@ -168,6 +169,14 @@ static void print_profile_summary (int sample_rate, int64_t samples, int windows
     fprintf (stderr, "profile: chunks=%d fast_chunks=%d windows=%d duration=%02d:%02d bypassed=%02d:%02d\n",
         profile_stats.chunks, profile_stats.fast_chunks, windows, MINS (samples, sample_rate), SECS (samples, sample_rate),
         MINS (fast_samples, sample_rate), SECS (fast_samples, sample_rate));
+}
+
+static void log_timeline_checkpoint (int64_t samples_written, int64_t samples_discarded)
+{
+    if (verbose)
+        fprintf (stderr, "timeline: input_samples=%lld output_samples=%lld discarded_samples=%lld\n",
+            (long long) (samples_written + samples_discarded),
+            (long long) samples_written, (long long) samples_discarded);
 }
 
 static int is_time_restricted_skip_active (int stream_time_enabled, int64_t stream_start_epoch_ms, int stream_time_utc_offset_minutes, int64_t sample_index, int sample_rate, const TimeRestrictionWindow *time_restriction_window)
@@ -609,6 +618,7 @@ int main (int argc, char **argv)
             fast_passthrough_samples += input_samples;
             num_samples += input_samples;
             confirmed_sample = num_samples;
+            log_timeline_checkpoint (samples_written, samples_discarded);
 
             current_mode = MODE_NOTHING;
             music_up_counter = talk_up_counter = pend_up_counter = 0;
@@ -789,6 +799,7 @@ int main (int argc, char **argv)
                                 if (crossfade_start >= 0) {
                                     fwrite (output_buffer, sizeof (int16_t) * 2, crossfade_start, stdout);
                                     samples_written += crossfade_start;
+                                    log_timeline_checkpoint (samples_written, samples_discarded);
                                     memmove (output_buffer, output_buffer + crossfade_start * 2, (output_buff_len - crossfade_start) * sizeof (int16_t) * 2);
                                     output_buffer_index -= crossfade_start;
 
@@ -809,6 +820,7 @@ int main (int argc, char **argv)
                                     memmove (output_buffer, output_buffer + crossfade_start * 2, (output_buff_len - crossfade_start) * sizeof (int16_t) * 2);
                                     output_buffer_index -= crossfade_start;
                                     samples_discarded += crossfade_start;
+                                    log_timeline_checkpoint (samples_written, samples_discarded);
 
                                     if (verbose)
                                         fprintf (stderr, "fade in: discarded %d samples (%.1f secs), %.1f secs remaining in buffer\n",
@@ -881,6 +893,7 @@ int main (int argc, char **argv)
 
                     samples_discarded += available_samples - crossfade_buff_len;
                     samples_written += crossfade_buff_len;
+                    log_timeline_checkpoint (samples_written, samples_discarded);
 
                     memmove (output_buffer, output_buffer + available_samples * 2, (output_buff_len - available_samples) * sizeof (int16_t) * 2);
                     output_buffer_index -= available_samples;
@@ -905,6 +918,8 @@ int main (int argc, char **argv)
                     }
                     else
                         samples_discarded += available_samples;
+
+                    log_timeline_checkpoint (samples_written, samples_discarded);
 
                     memmove (output_buffer, output_buffer + available_samples * 2, (output_buff_len - available_samples) * sizeof (int16_t) * 2);
                     output_buffer_index -= available_samples;
@@ -939,6 +954,8 @@ int main (int argc, char **argv)
         }
         else
             samples_discarded += output_buffer_index;
+
+        log_timeline_checkpoint (samples_written, samples_discarded);
 
         if (verbose)
             fprintf (stderr, "final: %s %d samples (%.1f secs), music/talk counts = %d/%d\n",

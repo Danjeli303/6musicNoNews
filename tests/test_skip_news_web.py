@@ -98,6 +98,85 @@ class MediaMetadataTests(unittest.TestCase):
         self.assertEqual(details["display_title"], "BBC Sounds programme m0030yw7")
 
 
+class TracklistTests(unittest.TestCase):
+    TRACKLIST = """Example Show
+Example episode
+2026-09-14
+https://www.bbc.co.uk/sounds/play/m0030yw7
+Music
+--------
+00:00:16
+Example Artist
+Example Track
+Release Title: Example Album
+Record Label: Example Records
+Duration: 00:00:02
+--------
+"""
+
+    def test_parses_get_iplayer_track_information(self):
+        tracks = skip_news_web.parse_get_iplayer_tracklist(
+            self.TRACKLIST, pid="m0030yw7"
+        )
+
+        self.assertEqual(len(tracks), 1)
+        self.assertEqual(tracks[0]["artist"], "Example Artist")
+        self.assertEqual(tracks[0]["title"], "Example Track")
+        self.assertEqual(tracks[0]["album"], "Example Album")
+        self.assertEqual(tracks[0]["programme"], "Example Show")
+        self.assertEqual(tracks[0]["presenter"], "Example episode")
+        self.assertEqual(tracks[0]["start_seconds"], 16)
+        self.assertEqual(tracks[0]["end_seconds"], 18)
+
+    def test_embedded_programme_metadata_takes_precedence(self):
+        track = skip_news_web.parse_get_iplayer_tracklist(
+            self.TRACKLIST,
+            programme="M4A Album Show",
+            presenter="M4A Title Presenter",
+        )[0]
+
+        self.assertEqual(track["programme"], "M4A Album Show")
+        self.assertEqual(track["presenter"], "M4A Title Presenter")
+
+    def test_adjusts_track_offsets_using_actual_discarded_samples(self):
+        tracks = skip_news_web.parse_get_iplayer_tracklist(self.TRACKLIST)
+        adjusted = skip_news_web.adjust_tracklist_for_skips(
+            tracks,
+            """sample rate = 10
+timeline: input_samples=100 output_samples=100 discarded_samples=0
+timeline: input_samples=150 output_samples=100 discarded_samples=50
+timeline: input_samples=250 output_samples=200 discarded_samples=50
+""",
+        )
+
+        self.assertEqual(adjusted[0]["original_start_seconds"], 16)
+        self.assertEqual(adjusted[0]["start_seconds"], 11)
+        self.assertEqual(adjusted[0]["end_seconds"], 13)
+
+    def test_only_moves_start_and_preserves_track_duration(self):
+        track = {
+            "original_start_seconds": 9,
+            "start_seconds": 9,
+            "duration_seconds": 10,
+            "end_seconds": 19,
+        }
+        adjusted = skip_news_web.adjust_tracklist_for_skips(
+            [track],
+            """sample rate = 10
+timeline: input_samples=100 output_samples=100 discarded_samples=0
+timeline: input_samples=150 output_samples=100 discarded_samples=50
+timeline: input_samples=250 output_samples=200 discarded_samples=50
+""",
+        )[0]
+
+        self.assertEqual(adjusted["start_seconds"], 9)
+        self.assertEqual(adjusted["end_seconds"], 19)
+        self.assertEqual(
+            adjusted["end_seconds"] - adjusted["start_seconds"],
+            track["duration_seconds"],
+        )
+
+
 class NowPlayingTests(unittest.TestCase):
     def test_normalizes_current_bbc_6_music_track(self):
         result = skip_news_web.bbc_now_playing_from_payload(
@@ -185,6 +264,19 @@ for arg in "$@"; do
 done
 printf ' 50.0%% of ~1 MB\n'
 printf 'fake audio' > "$out/$prefix.m4a"
+cat > "$out/$prefix.tracks.txt" <<'TRACKS'
+Example Show
+Example episode
+2026-09-14
+https://www.bbc.co.uk/sounds/play/m0030yw7
+Music
+--------
+00:00:10
+Example Artist
+Example Track
+Duration: 00:03:00
+--------
+TRACKS
 """,
             )
             self._write_executable(
@@ -222,6 +314,7 @@ cp "$1" "$2"
             self.assertIn("STAGE=process", completed.stdout)
             self.assertIn("STAGE=complete", completed.stdout)
             self.assertIn("OUTPUT_FILE=" + str(result), completed.stdout)
+            self.assertTrue((output_dir / "m0030yw7_newsskip.tracks.txt").is_file())
             self.assertEqual(list(temp_dir.iterdir()), [])
 
             subprocess.run(
@@ -271,7 +364,15 @@ class JobStoreTests(unittest.TestCase):
             result = output_dir / "m0030yw7_newsskip.m4a"
             result.write_bytes(b"previous audio")
             (output_dir / "m0030yw7_newsskip.log").write_text(
-                "processing log", encoding="utf-8"
+                """sample rate = 10
+timeline: input_samples=100 output_samples=100 discarded_samples=0
+timeline: input_samples=150 output_samples=100 discarded_samples=50
+timeline: input_samples=250 output_samples=200 discarded_samples=50
+""",
+                encoding="utf-8",
+            )
+            (output_dir / "m0030yw7_newsskip.tracks.txt").write_text(
+                TracklistTests.TRACKLIST, encoding="utf-8"
             )
 
             store = skip_news_web.JobStore(ROOT / "get_iplayer_skip_news.sh", output_dir)
@@ -283,6 +384,9 @@ class JobStoreTests(unittest.TestCase):
             self.assertEqual(jobs["history"][0]["filename"], result.name)
             self.assertEqual(jobs["history"][0]["file_size"], len(b"previous audio"))
             self.assertEqual(jobs["history"][0]["media_url"], "/media/" + result.name)
+            self.assertEqual(jobs["history"][0]["tracks"][0]["start_seconds"], 11)
+            self.assertEqual(jobs["history"][0]["tracks"][0]["programme"], "Example Show")
+            self.assertEqual(jobs["history"][0]["tracks"][0]["presenter"], "Example episode")
 
     def test_removes_processed_audio_and_log(self):
         with tempfile.TemporaryDirectory() as temp_root:
@@ -291,9 +395,11 @@ class JobStoreTests(unittest.TestCase):
             result = output_dir / "m0030yw7_newsskip.m4a"
             log = output_dir / "m0030yw7_newsskip.log"
             artwork = output_dir / "m0030yw7_newsskip.artwork.jpg"
+            tracklist = output_dir / "m0030yw7_newsskip.tracks.txt"
             result.write_bytes(b"audio")
             log.write_text("log", encoding="utf-8")
             artwork.write_bytes(b"artwork")
+            tracklist.write_text(TracklistTests.TRACKLIST, encoding="utf-8")
             store = skip_news_web.JobStore(ROOT / "get_iplayer_skip_news.sh", output_dir)
             archived = store.list_jobs()["history"][0]
             self.assertEqual(
@@ -307,7 +413,48 @@ class JobStoreTests(unittest.TestCase):
             self.assertFalse(result.exists())
             self.assertFalse(log.exists())
             self.assertFalse(artwork.exists())
+            self.assertFalse(tracklist.exists())
             self.assertEqual(store.list_jobs()["history"], [])
+
+    def test_removes_original_audio_and_all_associated_sidecars(self):
+        with tempfile.TemporaryDirectory() as temp_root:
+            output_dir = Path(temp_root) / "output"
+            output_dir.mkdir()
+            processed = output_dir / "m0030yw7_newsskip.m4a"
+            original = output_dir / "m0030yw7.m4a"
+            other_version = output_dir / "m0030yw7_newsskip_2.m4a"
+            unrelated = output_dir / "unrelated.m4a"
+            associated = [
+                processed,
+                output_dir / "m0030yw7_newsskip.log",
+                output_dir / "m0030yw7_newsskip.artwork.jpg",
+                output_dir / "m0030yw7_newsskip.tracks.txt",
+                original,
+                output_dir / "m0030yw7.log",
+                output_dir / "m0030yw7.artwork.jpg",
+                output_dir / "m0030yw7.tracks.txt",
+            ]
+            for path in associated:
+                path.write_bytes(b"associated")
+            other_version.write_bytes(b"keep another processed version")
+            unrelated.write_bytes(b"keep unrelated")
+
+            store = skip_news_web.JobStore(ROOT / "get_iplayer_skip_news.sh", output_dir)
+            job = next(
+                item
+                for item in store.list_jobs()["history"]
+                if item["filename"] == processed.name
+            )
+
+            store.remove(job["id"])
+
+            self.assertTrue(all(not path.exists() for path in associated))
+            self.assertTrue(other_version.exists())
+            self.assertTrue(unrelated.exists())
+            remaining = {
+                item["filename"] for item in store.list_jobs()["history"]
+            }
+            self.assertEqual(remaining, {other_version.name, unrelated.name})
 
     def test_does_not_remove_an_active_job(self):
         with tempfile.TemporaryDirectory() as output_dir:
@@ -408,9 +555,17 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn("autoplay: false", app)
         self.assertNotIn("<audio autoplay", html)
         self.assertIn('id="now-playing-title"', html)
+        self.assertIn('id="live-now-playing-title"', html)
+        self.assertIn('id="live-now-playing-favourite"', html)
         self.assertIn('fetch("/api/now-playing"', app)
         self.assertIn("setInterval(loadNowPlaying, 5000)", app)
         self.assertIn("display_delay_seconds", app)
+        self.assertIn('"mediaSession" in navigator', app)
+        self.assertIn("new MediaMetadata", app)
+        self.assertIn("navigator.mediaSession.playbackState", app)
+        self.assertIn("navigator.mediaSession.setPositionState", app)
+        self.assertIn("activeMediaPlayer === radioPlayer", app)
+        self.assertIn("renderHeaderHistory(entry", app)
         self.assertIn(
             ".history-player-wrap .video-js.vjs-layout-tiny .vjs-progress-control",
             styles,
@@ -422,6 +577,23 @@ class DeploymentTests(unittest.TestCase):
         self.assertGreater((vendor_dir / "video.min.js").stat().st_size, 100_000)
         self.assertTrue((vendor_dir / "video-js.min.css").is_file())
         self.assertTrue((vendor_dir / "LICENSE").is_file())
+
+    def test_favourites_use_a_shared_lastfm_compatible_store(self):
+        html = (ROOT / "web/index.html").read_text(encoding="utf-8")
+        favourites = (ROOT / "web/favourites.js").read_text(encoding="utf-8")
+        favourites_page = (ROOT / "web/favourites.html").read_text(encoding="utf-8")
+
+        self.assertIn('href="#favourites">Favourites</a>', html)
+        self.assertIn('id="favourites"', html)
+        self.assertIn('id="header-radio-toggle"', html)
+        self.assertIn('id="now-playing-favourite"', html)
+        self.assertIn('src="/favourites.js"', html)
+        self.assertIn('src="/favourites-page.js"', html)
+        self.assertIn("skipper.favouriteTracks.v1", favourites)
+        self.assertIn("https://www.google.com/search?q=", favourites)
+        self.assertIn("programme: clean(track?.programme)", favourites)
+        self.assertIn("presenter: clean(track?.presenter)", favourites)
+        self.assertIn('id="favourites-list"', favourites_page)
 
 
 if __name__ == "__main__":

@@ -29,6 +29,11 @@ PID_PATTERN = re.compile(r"^[a-z0-9]{8}$")
 ANSI_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 DOWNLOAD_PROGRESS_PATTERN = re.compile(r"(?:^|\s)(\d{1,3}(?:\.\d+)?)%")
 PROCESS_PROGRESS_PATTERN = re.compile(r"Processed:\s*(\d{1,3})%")
+SAMPLE_RATE_PATTERN = re.compile(r"^sample rate = (\d+)$", re.MULTILINE)
+TIMELINE_CHECKPOINT_PATTERN = re.compile(
+    r"^timeline: input_samples=(\d+) output_samples=(\d+) discarded_samples=(\d+)$",
+    re.MULTILINE,
+)
 MEDIA_EXTENSIONS = {
     ".flac",
     ".m4a",
@@ -249,6 +254,124 @@ def media_details_from_tags(tags, pid=None, filename=None):
     }
 
 
+def _seconds(value):
+    match = re.fullmatch(r"(\d+):(\d{2}):(\d{2})", value.strip())
+    if not match:
+        return None
+    hours, minutes, seconds = (int(part) for part in match.groups())
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def parse_get_iplayer_tracklist(text, pid=None, programme=None, presenter=None):
+    """Normalize get_iplayer's text track list into timed track records."""
+    if not isinstance(text, str):
+        return []
+    header = re.split(r"^--------\s*$", text, maxsplit=1, flags=re.MULTILINE)[0]
+    header_lines = [line.strip() for line in header.splitlines() if line.strip()]
+    programme = _clean_text(programme, 200) or (
+        _clean_text(header_lines[0], 200) if header_lines else None
+    )
+    presenter = _clean_text(presenter, 200) or (
+        _clean_text(header_lines[1], 200) if len(header_lines) > 1 else None
+    )
+    blocks = re.split(r"^--------\s*$", text, flags=re.MULTILINE)[1:]
+    tracks = []
+    for block in blocks:
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if len(lines) < 3:
+            continue
+        start = _seconds(lines[0])
+        if start is None:
+            continue
+        metadata = {}
+        for line in lines[3:]:
+            if ": " in line:
+                key, value = line.split(": ", 1)
+                metadata[key.casefold()] = _clean_text(value, 300)
+        duration = _seconds(metadata.get("duration") or "")
+        tracks.append(
+            {
+                "available": True,
+                "artist": _clean_text(lines[1], 200),
+                "title": _clean_text(lines[2], 300),
+                "album": metadata.get("release title"),
+                "record_label": metadata.get("record label"),
+                "duration_seconds": duration,
+                "original_start_seconds": start,
+                "start_seconds": start,
+                "end_seconds": start + duration if duration is not None else None,
+                "image_url": None,
+                "source": "BBC Radio 6 Music",
+                "programme_pid": pid,
+                "programme": programme,
+                "presenter": presenter,
+            }
+        )
+    return tracks
+
+
+def _timeline_checkpoints(log_text):
+    checkpoints = [(0, 0)]
+    for match in TIMELINE_CHECKPOINT_PATTERN.finditer(log_text or ""):
+        input_samples, output_samples, discarded_samples = (
+            int(value) for value in match.groups()
+        )
+        previous_input, previous_output = checkpoints[-1]
+        if (
+            input_samples != output_samples + discarded_samples
+            or input_samples < previous_input
+            or output_samples < previous_output
+        ):
+            continue
+        if input_samples == previous_input:
+            checkpoints[-1] = (input_samples, output_samples)
+        else:
+            checkpoints.append((input_samples, output_samples))
+    return checkpoints
+
+
+def adjust_tracklist_for_skips(tracks, log_text):
+    """Map original track offsets onto audio shortened by actual discarded samples."""
+    sample_rate_match = SAMPLE_RATE_PATTERN.search(log_text or "")
+    if not sample_rate_match:
+        return tracks
+    sample_rate = int(sample_rate_match.group(1))
+    checkpoints = _timeline_checkpoints(log_text)
+    if sample_rate < 1 or len(checkpoints) < 2:
+        return tracks
+
+    def output_seconds_at(original_seconds):
+        target = round(original_seconds * sample_rate)
+        previous_input = 0
+        previous_output = 0
+        for input_samples, output_samples in checkpoints[1:]:
+            if target <= input_samples:
+                input_delta = input_samples - previous_input
+                output_delta = output_samples - previous_output
+                if input_delta < 1:
+                    return round(previous_output / sample_rate, 3)
+                portion = (target - previous_input) / input_delta
+                mapped = previous_output + round(output_delta * portion)
+                return round(mapped / sample_rate, 3)
+            previous_input = input_samples
+            previous_output = output_samples
+            if previous_input >= target:
+                break
+        return round((previous_output + target - previous_input) / sample_rate, 3)
+
+    adjusted = []
+    for track in tracks:
+        item = dict(track)
+        item["start_seconds"] = output_seconds_at(track["original_start_seconds"])
+        item["end_seconds"] = (
+            item["start_seconds"] + track["duration_seconds"]
+            if track["duration_seconds"] is not None
+            else None
+        )
+        adjusted.append(item)
+    return adjusted
+
+
 class JobStore:
     def __init__(self, script_path, output_dir):
         self.script_path = Path(script_path).resolve()
@@ -302,6 +425,63 @@ class JobStore:
     @staticmethod
     def _artwork_path(output_path):
         return output_path.with_name(output_path.stem + ".artwork.jpg")
+
+    @staticmethod
+    def _tracklist_path(output_path):
+        return output_path.with_name(output_path.stem + ".tracks.txt")
+
+    def _associated_paths(self, job, output_path=None):
+        paths = set()
+
+        def add_media_and_sidecars(media_path):
+            paths.update(
+                {
+                    media_path,
+                    media_path.with_suffix(".log"),
+                    self._artwork_path(media_path),
+                    self._tracklist_path(media_path),
+                }
+            )
+
+        if output_path is not None:
+            add_media_and_sidecars(output_path)
+
+        pid = job.get("pid")
+        if isinstance(pid, str) and PID_PATTERN.fullmatch(pid):
+            for extension in MEDIA_EXTENSIONS:
+                add_media_and_sidecars(self.output_dir / (pid + extension))
+            paths.update(
+                {
+                    self.output_dir / (pid + ".log"),
+                    self.output_dir / (pid + ".artwork.jpg"),
+                    self.output_dir / (pid + ".tracks.txt"),
+                }
+            )
+        return paths
+
+    def _tracks(self, output_path, pid, media_details):
+        tracklist_path = self._tracklist_path(output_path)
+        if not tracklist_path.is_file():
+            return []
+        try:
+            presenter = media_details.get("title")
+            if pid and presenter == "BBC Sounds programme " + pid:
+                presenter = None
+            tracks = parse_get_iplayer_tracklist(
+                tracklist_path.read_text(encoding="utf-8", errors="replace"),
+                pid,
+                programme=media_details.get("album"),
+                presenter=presenter,
+            )
+            log_path = output_path.with_suffix(".log")
+            log_text = (
+                log_path.read_text(encoding="utf-8", errors="replace")
+                if log_path.is_file()
+                else ""
+            )
+            return adjust_tracklist_for_skips(tracks, log_text)
+        except OSError:
+            return []
 
     def _extract_artwork(self, output_path):
         artwork_path = self._artwork_path(output_path)
@@ -385,6 +565,7 @@ class JobStore:
                 "artwork_url": (
                     "/artwork/" + quote(artwork_path.name) if artwork_path else None
                 ),
+                "tracks": self._tracks(output_path, pid, details),
             }
         )
         return details
@@ -458,16 +639,29 @@ class JobStore:
                 raise ActiveJobError("A programme cannot be removed while it is processing.")
             filename = job.get("filename")
 
+        output_path = None
         if filename:
             output_path = (self.output_dir / filename).resolve()
             if output_path.parent != self.output_dir or output_path.name != filename:
                 raise RuntimeError("The stored output filename is invalid.")
-            output_path.unlink(missing_ok=True)
-            output_path.with_suffix(".log").unlink(missing_ok=True)
-            self._artwork_path(output_path).unlink(missing_ok=True)
+
+        associated_paths = self._associated_paths(job, output_path)
+        for path in associated_paths:
+            if path.parent != self.output_dir:
+                raise RuntimeError("An associated output path is invalid.")
+            path.unlink(missing_ok=True)
 
         with self.lock:
             removed = self.jobs.pop(job_id, None)
+            removed_filenames = {path.name for path in associated_paths}
+            stale_job_ids = [
+                stored_id
+                for stored_id, stored_job in self.jobs.items()
+                if stored_job.get("filename") in removed_filenames
+                and stored_job.get("status") not in {"queued", "running"}
+            ]
+            for stored_id in stale_job_ids:
+                self.jobs.pop(stored_id, None)
             return self._snapshot_job(removed) if removed else None
 
     def _update(self, job_id, **values):
@@ -759,6 +953,12 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
             self._send_static("index.html")
         elif path == "/app.js":
             self._send_static("app.js")
+        elif path == "/favourites.html":
+            self._send_static("favourites.html")
+        elif path == "/favourites.js":
+            self._send_static("favourites.js")
+        elif path == "/favourites-page.js":
+            self._send_static("favourites-page.js")
         elif path == "/styles.css":
             self._send_static("styles.css")
         elif path.startswith("/vendor/"):
