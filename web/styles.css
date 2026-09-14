@@ -239,7 +239,10 @@ button:disabled { cursor: wait; opacity: 0.65; }
 .selected-tracklist-status { min-height: 1.2em; margin: 8px 0 18px; color: #ddd; font-size: 0.78rem; }
 .music-played-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 250px));
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(min(210px, calc(50% - 6px)), 250px)
+  );
   justify-content: start;
   gap: 12px;
 }
