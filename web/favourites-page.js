@@ -33,12 +33,28 @@ function renderFavourites() {
       title.textContent = track.name || "Unknown track";
       const artist = document.createElement("p");
       artist.textContent = track.artist?.name || "Unknown artist";
+      const context = document.createElement("div");
+      context.className = "favourite-context";
+      if (track.programme) {
+        const show = document.createElement("p");
+        const showLabel = document.createElement("span");
+        showLabel.textContent = "Show";
+        show.append(showLabel, document.createTextNode(track.programme));
+        context.append(show);
+      }
+      if (track.presenter) {
+        const presenter = document.createElement("p");
+        const presenterLabel = document.createElement("span");
+        presenterLabel.textContent = "DJ";
+        presenter.append(presenterLabel, document.createTextNode(track.presenter));
+        context.append(presenter);
+      }
       const saved = document.createElement("small");
       const date = new Date(Number(track.date?.uts) * 1000);
       saved.textContent = Number.isNaN(date.getTime())
         ? track.source
         : `Saved ${date.toLocaleString()} · ${track.source}`;
-      copy.append(title, artist, saved);
+      copy.append(title, artist, context, saved);
       const remove = document.createElement("button");
       remove.className = "favourite-button is-favourite";
       remove.type = "button";

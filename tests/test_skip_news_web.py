@@ -123,23 +123,58 @@ Duration: 00:00:02
         self.assertEqual(tracks[0]["artist"], "Example Artist")
         self.assertEqual(tracks[0]["title"], "Example Track")
         self.assertEqual(tracks[0]["album"], "Example Album")
+        self.assertEqual(tracks[0]["programme"], "Example Show")
+        self.assertEqual(tracks[0]["presenter"], "Example episode")
         self.assertEqual(tracks[0]["start_seconds"], 16)
         self.assertEqual(tracks[0]["end_seconds"], 18)
+
+    def test_embedded_programme_metadata_takes_precedence(self):
+        track = skip_news_web.parse_get_iplayer_tracklist(
+            self.TRACKLIST,
+            programme="M4A Album Show",
+            presenter="M4A Title Presenter",
+        )[0]
+
+        self.assertEqual(track["programme"], "M4A Album Show")
+        self.assertEqual(track["presenter"], "M4A Title Presenter")
 
     def test_adjusts_track_offsets_using_actual_discarded_samples(self):
         tracks = skip_news_web.parse_get_iplayer_tracklist(self.TRACKLIST)
         adjusted = skip_news_web.adjust_tracklist_for_skips(
             tracks,
             """sample rate = 10
-wrote 100 samples (10.0 secs), output_buffer_index now 0 (0.0 secs), music/talk counts = 0/0
-discarded 50 samples (5.0 secs), output_buffer_index now 0 (0.0 secs), music/talk counts = 0/0
-final: wrote 100 samples (10.0 secs), music/talk counts = 0/0
+timeline: input_samples=100 output_samples=100 discarded_samples=0
+timeline: input_samples=150 output_samples=100 discarded_samples=50
+timeline: input_samples=250 output_samples=200 discarded_samples=50
 """,
         )
 
         self.assertEqual(adjusted[0]["original_start_seconds"], 16)
         self.assertEqual(adjusted[0]["start_seconds"], 11)
         self.assertEqual(adjusted[0]["end_seconds"], 13)
+
+    def test_only_moves_start_and_preserves_track_duration(self):
+        track = {
+            "original_start_seconds": 9,
+            "start_seconds": 9,
+            "duration_seconds": 10,
+            "end_seconds": 19,
+        }
+        adjusted = skip_news_web.adjust_tracklist_for_skips(
+            [track],
+            """sample rate = 10
+timeline: input_samples=100 output_samples=100 discarded_samples=0
+timeline: input_samples=150 output_samples=100 discarded_samples=50
+timeline: input_samples=250 output_samples=200 discarded_samples=50
+""",
+        )[0]
+
+        self.assertEqual(adjusted["start_seconds"], 9)
+        self.assertEqual(adjusted["end_seconds"], 19)
+        self.assertEqual(
+            adjusted["end_seconds"] - adjusted["start_seconds"],
+            track["duration_seconds"],
+        )
 
 
 class NowPlayingTests(unittest.TestCase):
@@ -330,9 +365,9 @@ class JobStoreTests(unittest.TestCase):
             result.write_bytes(b"previous audio")
             (output_dir / "m0030yw7_newsskip.log").write_text(
                 """sample rate = 10
-wrote 100 samples (10.0 secs), output_buffer_index now 0 (0.0 secs), music/talk counts = 0/0
-discarded 50 samples (5.0 secs), output_buffer_index now 0 (0.0 secs), music/talk counts = 0/0
-final: wrote 100 samples (10.0 secs), music/talk counts = 0/0
+timeline: input_samples=100 output_samples=100 discarded_samples=0
+timeline: input_samples=150 output_samples=100 discarded_samples=50
+timeline: input_samples=250 output_samples=200 discarded_samples=50
 """,
                 encoding="utf-8",
             )
@@ -350,6 +385,8 @@ final: wrote 100 samples (10.0 secs), music/talk counts = 0/0
             self.assertEqual(jobs["history"][0]["file_size"], len(b"previous audio"))
             self.assertEqual(jobs["history"][0]["media_url"], "/media/" + result.name)
             self.assertEqual(jobs["history"][0]["tracks"][0]["start_seconds"], 11)
+            self.assertEqual(jobs["history"][0]["tracks"][0]["programme"], "Example Show")
+            self.assertEqual(jobs["history"][0]["tracks"][0]["presenter"], "Example episode")
 
     def test_removes_processed_audio_and_log(self):
         with tempfile.TemporaryDirectory() as temp_root:
@@ -503,6 +540,8 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('src="/favourites.js"', html)
         self.assertIn("skipper.favouriteTracks.v1", favourites)
         self.assertIn("https://www.last.fm/search?q=", favourites)
+        self.assertIn("programme: clean(track?.programme)", favourites)
+        self.assertIn("presenter: clean(track?.presenter)", favourites)
         self.assertIn('id="favourites-list"', favourites_page)
 
 

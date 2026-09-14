@@ -393,6 +393,7 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 .track-search-link:hover { text-decoration: underline; }
 
 .favourite-button {
+  position: relative;
   width: 46px;
   height: 46px;
   min-height: 0;
@@ -408,7 +409,18 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
   font-size: 1.7rem;
 }
 
-.favourite-button span:last-child { font-size: inherit; line-height: 1; }
+.favourite-button span:last-child {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 1em;
+  height: 1em;
+  display: grid;
+  place-items: center;
+  font-size: inherit;
+  line-height: 1;
+  transform: translate(-50%, -50%);
+}
 .favourite-button:hover { color: #fff; background: #4a1000; border-color: var(--sounds-light); }
 .favourite-button.is-favourite { color: var(--sounds-light); border-color: var(--sounds-light); }
 .favourite-button:disabled { cursor: default; opacity: 0.35; }
@@ -451,6 +463,9 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 .favourite-copy a:hover { text-decoration: underline; }
 .favourite-copy p { margin: 6px 0; color: #ddd; }
 .favourite-copy small { color: var(--muted); }
+.favourite-context { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 0; }
+.favourite-context p { margin: 0; color: var(--muted); font-size: 0.78rem; }
+.favourite-context span { margin-right: 6px; color: var(--sounds-light); font-size: 0.65rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
 
 .now-playing-copy span {
   margin-top: 6px;

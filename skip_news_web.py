@@ -30,11 +30,9 @@ ANSI_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 DOWNLOAD_PROGRESS_PATTERN = re.compile(r"(?:^|\s)(\d{1,3}(?:\.\d+)?)%")
 PROCESS_PROGRESS_PATTERN = re.compile(r"Processed:\s*(\d{1,3})%")
 SAMPLE_RATE_PATTERN = re.compile(r"^sample rate = (\d+)$", re.MULTILINE)
-SAMPLE_OPERATION_PATTERNS = (
-    re.compile(r"^fade out: wrote (\d+) samples", re.MULTILINE),
-    re.compile(r"^fade in: discarded (\d+) samples", re.MULTILINE),
-    re.compile(r"^(wrote|discarded) (\d+) samples", re.MULTILINE),
-    re.compile(r"^final: (wrote|discarded) (\d+) samples", re.MULTILINE),
+TIMELINE_CHECKPOINT_PATTERN = re.compile(
+    r"^timeline: input_samples=(\d+) output_samples=(\d+) discarded_samples=(\d+)$",
+    re.MULTILINE,
 )
 MEDIA_EXTENSIONS = {
     ".flac",
@@ -264,10 +262,18 @@ def _seconds(value):
     return hours * 3600 + minutes * 60 + seconds
 
 
-def parse_get_iplayer_tracklist(text, pid=None):
+def parse_get_iplayer_tracklist(text, pid=None, programme=None, presenter=None):
     """Normalize get_iplayer's text track list into timed track records."""
     if not isinstance(text, str):
         return []
+    header = re.split(r"^--------\s*$", text, maxsplit=1, flags=re.MULTILINE)[0]
+    header_lines = [line.strip() for line in header.splitlines() if line.strip()]
+    programme = _clean_text(programme, 200) or (
+        _clean_text(header_lines[0], 200) if header_lines else None
+    )
+    presenter = _clean_text(presenter, 200) or (
+        _clean_text(header_lines[1], 200) if len(header_lines) > 1 else None
+    )
     blocks = re.split(r"^--------\s*$", text, flags=re.MULTILINE)[1:]
     tracks = []
     for block in blocks:
@@ -297,25 +303,31 @@ def parse_get_iplayer_tracklist(text, pid=None):
                 "image_url": None,
                 "source": "BBC Radio 6 Music",
                 "programme_pid": pid,
+                "programme": programme,
+                "presenter": presenter,
             }
         )
     return tracks
 
 
-def _sample_operations(log_text):
-    operations = []
-    for pattern in SAMPLE_OPERATION_PATTERNS:
-        for match in pattern.finditer(log_text):
-            groups = match.groups()
-            if len(groups) == 1:
-                written = pattern is SAMPLE_OPERATION_PATTERNS[0]
-                count = int(groups[0])
-            else:
-                written = groups[0] == "wrote"
-                count = int(groups[1])
-            operations.append((match.start(), written, count))
-    operations.sort(key=lambda operation: operation[0])
-    return [(written, count) for _, written, count in operations]
+def _timeline_checkpoints(log_text):
+    checkpoints = [(0, 0)]
+    for match in TIMELINE_CHECKPOINT_PATTERN.finditer(log_text or ""):
+        input_samples, output_samples, discarded_samples = (
+            int(value) for value in match.groups()
+        )
+        previous_input, previous_output = checkpoints[-1]
+        if (
+            input_samples != output_samples + discarded_samples
+            or input_samples < previous_input
+            or output_samples < previous_output
+        ):
+            continue
+        if input_samples == previous_input:
+            checkpoints[-1] = (input_samples, output_samples)
+        else:
+            checkpoints.append((input_samples, output_samples))
+    return checkpoints
 
 
 def adjust_tracklist_for_skips(tracks, log_text):
@@ -324,32 +336,37 @@ def adjust_tracklist_for_skips(tracks, log_text):
     if not sample_rate_match:
         return tracks
     sample_rate = int(sample_rate_match.group(1))
-    operations = _sample_operations(log_text)
-    if sample_rate < 1 or not operations:
+    checkpoints = _timeline_checkpoints(log_text)
+    if sample_rate < 1 or len(checkpoints) < 2:
         return tracks
 
     def output_seconds_at(original_seconds):
         target = round(original_seconds * sample_rate)
-        consumed = 0
-        written_total = 0
-        for written, count in operations:
-            amount = min(count, max(0, target - consumed))
-            if written:
-                written_total += amount
-            consumed += count
-            if consumed >= target:
+        previous_input = 0
+        previous_output = 0
+        for input_samples, output_samples in checkpoints[1:]:
+            if target <= input_samples:
+                input_delta = input_samples - previous_input
+                output_delta = output_samples - previous_output
+                if input_delta < 1:
+                    return round(previous_output / sample_rate, 3)
+                portion = (target - previous_input) / input_delta
+                mapped = previous_output + round(output_delta * portion)
+                return round(mapped / sample_rate, 3)
+            previous_input = input_samples
+            previous_output = output_samples
+            if previous_input >= target:
                 break
-        if consumed < target:
-            written_total += target - consumed
-        return round(written_total / sample_rate, 3)
+        return round((previous_output + target - previous_input) / sample_rate, 3)
 
     adjusted = []
     for track in tracks:
         item = dict(track)
         item["start_seconds"] = output_seconds_at(track["original_start_seconds"])
-        original_end = track["original_start_seconds"] + (track["duration_seconds"] or 0)
         item["end_seconds"] = (
-            output_seconds_at(original_end) if track["duration_seconds"] is not None else None
+            item["start_seconds"] + track["duration_seconds"]
+            if track["duration_seconds"] is not None
+            else None
         )
         adjusted.append(item)
     return adjusted
@@ -413,13 +430,19 @@ class JobStore:
     def _tracklist_path(output_path):
         return output_path.with_name(output_path.stem + ".tracks.txt")
 
-    def _tracks(self, output_path, pid):
+    def _tracks(self, output_path, pid, media_details):
         tracklist_path = self._tracklist_path(output_path)
         if not tracklist_path.is_file():
             return []
         try:
+            presenter = media_details.get("title")
+            if pid and presenter == "BBC Sounds programme " + pid:
+                presenter = None
             tracks = parse_get_iplayer_tracklist(
-                tracklist_path.read_text(encoding="utf-8", errors="replace"), pid
+                tracklist_path.read_text(encoding="utf-8", errors="replace"),
+                pid,
+                programme=media_details.get("album"),
+                presenter=presenter,
             )
             log_path = output_path.with_suffix(".log")
             log_text = (
@@ -513,7 +536,7 @@ class JobStore:
                 "artwork_url": (
                     "/artwork/" + quote(artwork_path.name) if artwork_path else None
                 ),
-                "tracks": self._tracks(output_path, pid),
+                "tracks": self._tracks(output_path, pid, details),
             }
         )
         return details

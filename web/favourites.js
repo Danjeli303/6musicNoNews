@@ -58,6 +58,8 @@
       },
       source: clean(track?.source || "BBC Radio 6 Music"),
       programme_pid: clean(track?.programme_pid),
+      programme: clean(track?.programme),
+      presenter: clean(track?.presenter),
     };
   }
 
