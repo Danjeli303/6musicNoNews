@@ -125,9 +125,33 @@
         <section id="process" class="process-section" aria-labelledby="process-title">
           <div class="process-heading">
             <h2 id="process-title">Process</h2>
-            <p>Paste a BBC Sounds programme link to remove scheduled news.</p>
+            <p>Choose a BBC Radio 6 Music programme or paste a BBC Sounds link to remove scheduled news.</p>
           </div>
           <form id="programme-form" novalidate>
+            <label for="programme-search">Find a 6 Music programme</label>
+            <div class="programme-combobox">
+              <input
+                id="programme-search"
+                type="text"
+                role="combobox"
+                aria-autocomplete="list"
+                aria-controls="programme-options"
+                aria-expanded="false"
+                autocomplete="off"
+                placeholder="search for recent programmes"
+              />
+              <button
+                id="programme-dropdown-button"
+                class="programme-dropdown-button"
+                type="button"
+                aria-label="Show available programmes"
+                aria-controls="programme-options"
+                aria-expanded="false"
+                disabled
+              ><span aria-hidden="true">▾</span></button>
+              <div id="programme-options" class="programme-options" role="listbox" hidden></div>
+            </div>
+            <p id="programme-list-status" class="programme-list-status" aria-live="polite"></p>
             <label for="sounds-url">BBC Sounds link</label>
             <div class="input-row">
               <input
@@ -145,6 +169,11 @@
               </button>
             </div>
           </form>
+          <section id="selected-tracklist" class="selected-tracklist" aria-labelledby="selected-tracklist-title" hidden>
+            <h3 id="selected-tracklist-title">Music played in this show:</h3>
+            <p id="selected-tracklist-status" class="selected-tracklist-status" aria-live="polite"></p>
+            <div id="selected-track-grid" class="music-played-grid"></div>
+          </section>
         </section>
 
         <section id="job-card" class="job-card" aria-live="polite" hidden>

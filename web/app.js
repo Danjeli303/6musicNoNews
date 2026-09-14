@@ -1,5 +1,12 @@
 const form = document.querySelector("#programme-form");
 const input = document.querySelector("#sounds-url");
+const programmeSearch = document.querySelector("#programme-search");
+const programmeDropdownButton = document.querySelector("#programme-dropdown-button");
+const programmeOptions = document.querySelector("#programme-options");
+const programmeListStatus = document.querySelector("#programme-list-status");
+const selectedTracklist = document.querySelector("#selected-tracklist");
+const selectedTracklistStatus = document.querySelector("#selected-tracklist-status");
+const selectedTrackGrid = document.querySelector("#selected-track-grid");
 const submitButton = document.querySelector("#submit-button");
 const card = document.querySelector("#job-card");
 const kicker = document.querySelector("#job-kicker");
@@ -69,6 +76,177 @@ let fipToggleCooldownTimer;
 let fipToggleCooldownUntil = 0;
 let fipMixerTransitioning = false;
 const historyPlayers = new Map();
+let availableProgrammes = [];
+let visibleProgrammes = [];
+let activeProgrammeIndex = -1;
+let selectedProgrammeUrl = "";
+let tracklistRequestNumber = 0;
+let selectedTracks = [];
+
+function programmeOptionLabel(programme) {
+  const detail = programme.episode && programme.episode !== programme.title
+    ? ` — ${programme.episode}`
+    : "";
+  return `${programme.title}${detail}`;
+}
+
+function programmeDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Date unavailable";
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  }).format(date);
+}
+
+function setProgrammeDropdownOpen(open) {
+  if (!programmeOptions) return;
+  programmeOptions.hidden = !open;
+  programmeSearch.setAttribute("aria-expanded", String(open));
+  programmeDropdownButton.setAttribute("aria-expanded", String(open));
+  programmeDropdownButton.classList.toggle("is-open", open);
+  if (!open) {
+    activeProgrammeIndex = -1;
+    programmeSearch.removeAttribute("aria-activedescendant");
+  }
+}
+
+function setActiveProgramme(index) {
+  if (!visibleProgrammes.length) return;
+  activeProgrammeIndex = Math.max(0, Math.min(index, visibleProgrammes.length - 1));
+  const options = programmeOptions.querySelectorAll("[role=option]");
+  options.forEach((option, optionIndex) => {
+    const active = optionIndex === activeProgrammeIndex;
+    option.classList.toggle("is-active", active);
+    option.setAttribute("aria-selected", String(active));
+  });
+  const activeOption = options[activeProgrammeIndex];
+  if (activeOption) {
+    programmeSearch.setAttribute("aria-activedescendant", activeOption.id);
+    activeOption.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function chooseProgramme(index) {
+  const programme = visibleProgrammes[index];
+  if (!programme) return;
+  programmeSearch.value = programme.title;
+  input.value = programme.url;
+  selectedProgrammeUrl = programme.url;
+  programmeListStatus.textContent = `Selected ${programmeOptionLabel(programme)}.`;
+  setProgrammeDropdownOpen(false);
+  programmeSearch.focus();
+  loadSelectedTracklist(programme);
+}
+
+function clearSelectedTracklist() {
+  tracklistRequestNumber += 1;
+  selectedTracklist.hidden = true;
+  selectedTracklistStatus.textContent = "";
+  selectedTrackGrid.replaceChildren();
+  selectedTracks = [];
+}
+
+function trackTime(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value < 0) return "";
+  const minutes = Math.floor(value / 60);
+  const remainder = Math.floor(value % 60);
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+}
+
+function renderSelectedTracks(tracks) {
+  selectedTracks = tracks;
+  selectedTrackGrid.replaceChildren(
+    ...tracks.map((track, index) => {
+      const item = makeElement("article", "show-track offline-now-playing");
+      const copy = makeElement("div", "offline-track-copy");
+      const time = trackTime(track.start_seconds);
+      copy.append(makeElement("p", "", time ? `Track ${index + 1} · ${time}` : `Track ${index + 1}`));
+      const title = makeElement("a", "offline-track-title track-search-link", "");
+      setTrackLink(title, track, "Title unavailable");
+      copy.append(title);
+      const detail = [track.artist, track.album].filter(Boolean).join(" · ");
+      copy.append(makeElement("span", "offline-track-artist", detail || "Artist unavailable"));
+      const favourite = makeElement("button", "favourite-button show-track-favourite");
+      favourite.type = "button";
+      favourite.dataset.trackIndex = String(index);
+      favourite.append(makeElement("span", "", "♡"));
+      updateFavouriteButton(favourite, track);
+      item.append(copy, favourite);
+      return item;
+    }),
+  );
+}
+
+async function loadSelectedTracklist(programme) {
+  const requestNumber = ++tracklistRequestNumber;
+  selectedTracklist.hidden = false;
+  selectedTrackGrid.replaceChildren();
+  selectedTracklistStatus.textContent = "Loading music played…";
+  try {
+    const response = await fetch(`/api/programmes/${encodeURIComponent(programme.pid)}/tracks`, {
+      cache: "no-store",
+    });
+    const data = await readResponse(response);
+    if (requestNumber !== tracklistRequestNumber) return;
+    const tracks = Array.isArray(data.tracks) ? data.tracks : [];
+    renderSelectedTracks(tracks);
+    selectedTracklistStatus.textContent = tracks.length
+      ? `${tracks.length} track${tracks.length === 1 ? "" : "s"}.`
+      : "No music tracklist is available for this show.";
+  } catch (error) {
+    if (requestNumber !== tracklistRequestNumber) return;
+    selectedTracklistStatus.textContent = error.message;
+  }
+}
+
+function renderProgrammeOptions(open = false) {
+  if (!programmeOptions) return;
+  const query = programmeSearch.value.trim().toLocaleLowerCase();
+  visibleProgrammes = availableProgrammes.filter((programme) =>
+    programme.title.toLocaleLowerCase().includes(query),
+  );
+  programmeOptions.replaceChildren(
+    ...visibleProgrammes.map((programme, index) => {
+      const option = document.createElement("button");
+      option.type = "button";
+      option.id = `programme-option-${index}`;
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", "false");
+      option.tabIndex = -1;
+      option.dataset.index = String(index);
+      option.append(
+        makeElement("span", "programme-option-title", programme.title),
+        ...(programme.episode && programme.episode !== programme.title
+          ? [makeElement("span", "programme-option-episode", programme.episode)]
+          : []),
+        makeElement("span", "programme-option-date", programmeDate(programme.available_at)),
+      );
+      return option;
+    }),
+  );
+  programmeDropdownButton.disabled = availableProgrammes.length === 0;
+  programmeListStatus.textContent = query
+    ? `${visibleProgrammes.length} title${visibleProgrammes.length === 1 ? "" : "s"} matching “${programmeSearch.value.trim()}”.`
+    : "";
+  setProgrammeDropdownOpen(open && visibleProgrammes.length > 0);
+}
+
+async function loadProgrammes() {
+  if (!programmeOptions) return;
+  try {
+    const response = await fetch("/api/programmes", { cache: "no-store" });
+    const data = await readResponse(response);
+    availableProgrammes = Array.isArray(data.programmes) ? data.programmes : [];
+    renderProgrammeOptions();
+  } catch (error) {
+    programmeDropdownButton.disabled = true;
+    setProgrammeDropdownOpen(false);
+    programmeListStatus.textContent = `${error.message} You can still paste a BBC Sounds link.`;
+  }
+}
 
 function updateHeaderRadioToggle(isPlaying, source = "live radio") {
   if (!headerRadioToggle) return;
@@ -1071,6 +1249,57 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
+programmeSearch?.addEventListener("input", () => {
+  if (input.value === selectedProgrammeUrl) input.value = "";
+  selectedProgrammeUrl = "";
+  clearSelectedTracklist();
+  const query = programmeSearch.value.trim();
+  renderProgrammeOptions(query.length >= 3);
+});
+programmeSearch?.addEventListener("keydown", (event) => {
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    if (programmeOptions.hidden) renderProgrammeOptions(true);
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    const start = activeProgrammeIndex < 0
+      ? (step > 0 ? 0 : visibleProgrammes.length - 1)
+      : activeProgrammeIndex + step;
+    setActiveProgramme(start);
+  } else if (event.key === "Enter" && !programmeOptions.hidden && activeProgrammeIndex >= 0) {
+    event.preventDefault();
+    chooseProgramme(activeProgrammeIndex);
+  } else if (event.key === "Escape") {
+    setProgrammeDropdownOpen(false);
+  }
+});
+programmeDropdownButton?.addEventListener("click", () => {
+  if (programmeOptions.hidden) {
+    renderProgrammeOptions(true);
+    programmeSearch.focus();
+  } else {
+    setProgrammeDropdownOpen(false);
+  }
+});
+programmeOptions?.addEventListener("click", (event) => {
+  const option = event.target.closest("[role=option]");
+  if (option) chooseProgramme(Number(option.dataset.index));
+});
+programmeOptions?.addEventListener("mousemove", (event) => {
+  const option = event.target.closest("[role=option]");
+  if (option) setActiveProgramme(Number(option.dataset.index));
+});
+selectedTrackGrid?.addEventListener("click", (event) => {
+  const favourite = event.target.closest("button[data-track-index]");
+  if (!favourite) return;
+  const track = selectedTracks[Number(favourite.dataset.trackIndex)];
+  if (!track) return;
+  window.SkipperFavourites.toggle(track);
+  updateFavouriteButton(favourite, track);
+});
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".programme-combobox")) setProgrammeDropdownOpen(false);
+});
+
 refreshButton.addEventListener("click", loadJobs);
 
 historyJobs.addEventListener("click", async (event) => {
@@ -1137,6 +1366,12 @@ window.addEventListener("storage", () => {
   historyPlayers.forEach((entry) => {
     updateFavouriteButton(entry.favourite, entry.currentTrack);
   });
+  selectedTracks.forEach((track, index) => {
+    updateFavouriteButton(
+      selectedTrackGrid.querySelector(`[data-track-index="${index}"]`),
+      track,
+    );
+  });
 });
 
 window.addEventListener("skipper:favourites-changed", () => {
@@ -1148,12 +1383,20 @@ window.addEventListener("skipper:favourites-changed", () => {
   historyPlayers.forEach((entry) => {
     updateFavouriteButton(entry.favourite, entry.currentTrack);
   });
+  selectedTracks.forEach((track, index) => {
+    updateFavouriteButton(
+      selectedTrackGrid.querySelector(`[data-track-index="${index}"]`),
+      track,
+    );
+  });
 });
 
 initialiseRadioPlayer();
 window.SkipperFavourites.load();
 loadNowPlaying();
 loadJobs();
+loadProgrammes();
 setInterval(loadNowPlaying, 5000);
 setInterval(alternateHeaderMetadata, 7000);
 setInterval(loadJobs, 2000);
+setInterval(loadProgrammes, 60 * 60 * 1000);

@@ -175,6 +175,56 @@ timeline: input_samples=250 output_samples=200 discarded_samples=50
             track["duration_seconds"],
         )
 
+    def test_tracklist_only_fetch_is_cached_by_pid(self):
+        with tempfile.TemporaryDirectory() as temp_root:
+            root = Path(temp_root)
+            executable = root / "get_iplayer"
+            calls = root / "calls"
+            executable.write_text(
+                """#!/bin/sh
+set -eu
+output=
+prefix=
+tracklist_only=0
+for argument in "$@"; do
+    case "$argument" in
+        --output=*) output=${argument#--output=} ;;
+        --file-prefix=*) prefix=${argument#--file-prefix=} ;;
+        --tracklist-only) tracklist_only=1 ;;
+    esac
+done
+[ "$tracklist_only" -eq 1 ]
+printf 'called\n' >> "CALLS_FILE"
+cat > "$output/$prefix.tracks.txt" <<'TRACKS'
+Example Show
+Example episode
+2026-09-14
+https://www.bbc.co.uk/sounds/play/m0030yw7
+Music
+--------
+00:00:16
+Example Artist
+Example Track
+Duration: 00:00:02
+--------
+TRACKS
+""".replace("CALLS_FILE", str(calls)),
+                encoding="utf-8",
+            )
+            executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+            service = skip_news_web.BBCTracklistService(
+                root / "cache", root / "profile", executable=executable
+            )
+
+            first = service.get("m0030yw7")
+            second = service.get("m0030yw7")
+
+            self.assertFalse(first["cached"])
+            self.assertTrue(second["cached"])
+            self.assertEqual(first["tracks"][0]["title"], "Example Track")
+            self.assertEqual(calls.read_text(encoding="utf-8"), "called\n")
+            self.assertTrue((root / "cache/m0030yw7.tracks.txt").is_file())
+
 
 class FavouriteStoreTests(unittest.TestCase):
     def test_persists_lastfm_shaped_favourites_between_instances(self):
@@ -449,6 +499,56 @@ class ScheduleTests(unittest.TestCase):
 
         self.assertEqual(current["title"], "Lauren Laverne")
         self.assertTrue(current["schedule_inferred"])
+
+
+class ProgrammeCatalogueTests(unittest.TestCase):
+    OUTPUT = (
+        "SKIPPER_PROGRAMME|||m00318j6|||Gilles Peterson|||Deep jazz selections|||"
+        "BBC Radio 6 Music|||2026-09-14T18:00:00+00:00|||7200|||"
+        "https://ichef.bbci.co.uk/images/ic/192xn/p0m53m3f.jpg|||"
+        "https://www.bbc.co.uk/programmes/m00318j6\n"
+        "SKIPPER_PROGRAMME|||m00318j8|||Lauren Laverne|||Latest show|||"
+        "BBC Radio 6 Music|||2026-09-15T12:00:00+00:00|||10800|||"
+        "https://ichef.bbci.co.uk/images/ic/192xn/p0m53ld7.jpg|||"
+        "https://www.bbc.co.uk/programmes/m00318j8\n"
+        "SKIPPER_PROGRAMME|||m00318j7|||Other show|||Wrong station|||"
+        "BBC Radio 4|||2026-09-14T19:00:00+00:00|||3600||||||\n"
+    )
+
+    def test_parser_only_keeps_exact_6_music_programmes(self):
+        programmes = skip_news_web.get_iplayer_programmes_from_output(self.OUTPUT)
+
+        self.assertEqual(len(programmes), 2)
+        self.assertEqual(programmes[0]["title"], "Lauren Laverne")
+        self.assertEqual(programmes[1]["title"], "Gilles Peterson")
+        self.assertEqual(
+            programmes[1]["url"],
+            "https://www.bbc.co.uk/sounds/play/m00318j6",
+        )
+
+    def test_reuses_hourly_schedule_refresh_for_programme_search(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            service = skip_news_web.BBCScheduleService(output_dir)
+            refreshes = []
+            searches = []
+            service._refresh = lambda: refreshes.append(True) or [
+                {
+                    "available": True,
+                    "start_timestamp": 0,
+                    "end_timestamp": 1,
+                }
+            ]
+            service._search_programmes = lambda: searches.append(True) or [
+                {"title": "Gilles Peterson"}
+            ]
+
+            service.list_programmes()
+            service.list_programmes()
+            self.assertEqual((len(refreshes), len(searches)), (1, 1))
+            service.cached_at -= service.cache_seconds + 1
+            service.programmes_cached_at -= service.programme_cache_seconds + 1
+            service.list_programmes()
+            self.assertEqual((len(refreshes), len(searches)), (2, 2))
 
 
 class WrapperTests(unittest.TestCase):
@@ -734,6 +834,8 @@ printf 'STAGE=complete\\n'
 class DeploymentTests(unittest.TestCase):
     def test_page_uses_simple_live_process_programmes_order(self):
         html = (ROOT / "web/index.html").read_text(encoding="utf-8")
+        app = (ROOT / "web/app.js").read_text(encoding="utf-8")
+        styles = (ROOT / "web/styles.css").read_text(encoding="utf-8")
 
         self.assertLess(html.index('id="live-stream"'), html.index('id="process"'))
         self.assertLess(html.index('id="process"'), html.index('id="programmes"'))
@@ -743,6 +845,24 @@ class DeploymentTests(unittest.TestCase):
         self.assertNotIn("Your activity", html)
         self.assertNotIn("Your programme.", html)
         self.assertNotIn("Without the news.", html)
+        self.assertIn('id="programme-search"', html)
+        self.assertIn('role="combobox"', html)
+        self.assertIn('id="programme-dropdown-button"', html)
+        self.assertIn('id="programme-options"', html)
+        self.assertIn('fetch("/api/programmes"', app)
+        self.assertIn("programme.title.toLocaleLowerCase().includes(query)", app)
+        self.assertIn("renderProgrammeOptions(query.length >= 3)", app)
+        self.assertIn('id="selected-tracklist"', html)
+        self.assertIn("Music played in this show:", html)
+        self.assertIn("/tracks`,", app)
+        self.assertIn("programme-option-date", app)
+        self.assertIn('year: "2-digit"', app)
+        self.assertIn("show-track-favourite", app)
+        self.assertIn("repeat(2, minmax(0, 1fr))", styles)
+        self.assertIn("@container (min-width: 513px)", styles)
+        self.assertIn("repeat(3, minmax(0, 1fr))", styles)
+        self.assertIn("repeat(4, minmax(0, 1fr))", styles)
+        self.assertIn("repeat(5, minmax(0, 1fr))", styles)
 
     def test_caddy_routes_hls_and_web_on_the_same_host(self):
         caddyfile = (ROOT / "docker/caddy/Caddyfile").read_text(encoding="utf-8")
