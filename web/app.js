@@ -63,6 +63,8 @@ let pendingNowPlayingSignature = "";
 let activeMediaPlayer;
 let activeHeaderEntry;
 let showingProgrammeContext = false;
+let fipToggleCooldownTimer;
+let fipToggleCooldownUntil = 0;
 const historyPlayers = new Map();
 
 function updateHeaderRadioToggle(isPlaying, source = "live radio") {
@@ -451,9 +453,35 @@ function setFipToggleState(enabled) {
   );
 }
 
+function startFipToggleCooldown() {
+  fipToggleCooldownUntil = Date.now() + 30000;
+  clearInterval(fipToggleCooldownTimer);
+
+  const updateCooldown = () => {
+    const remainingSeconds = Math.ceil(
+      (fipToggleCooldownUntil - Date.now()) / 1000,
+    );
+    if (remainingSeconds <= 0) {
+      clearInterval(fipToggleCooldownTimer);
+      fipToggleCooldownTimer = undefined;
+      fipToggleCooldownUntil = 0;
+      fipToggle.disabled = false;
+      fipToggleStatus.textContent = "";
+      loadNowPlaying();
+      return;
+    }
+    fipToggle.disabled = true;
+    fipToggleStatus.textContent = `Switching · ${remainingSeconds}s`;
+  };
+
+  updateCooldown();
+  fipToggleCooldownTimer = setInterval(updateCooldown, 1000);
+}
+
 async function toggleFip() {
   if (!fipToggle || fipToggle.disabled) return;
   const enabled = fipToggle.getAttribute("aria-checked") !== "true";
+  const previousState = !enabled;
   fipToggle.disabled = true;
   fipToggleStatus.textContent = "Switching…";
   try {
@@ -464,11 +492,10 @@ async function toggleFip() {
     });
     await readResponse(response);
     setFipToggleState(enabled);
-    fipToggleStatus.textContent = "";
-    setTimeout(loadNowPlaying, 500);
+    startFipToggleCooldown();
   } catch (error) {
+    setFipToggleState(previousState);
     fipToggleStatus.textContent = error.message || "Unavailable";
-  } finally {
     fipToggle.disabled = false;
   }
 }
@@ -479,7 +506,9 @@ async function loadNowPlaying() {
   try {
     const response = await fetch("/api/now-playing", { cache: "no-store" });
     const track = await readResponse(response);
-    setFipToggleState(track.news?.news_active === true);
+    if (Date.now() >= fipToggleCooldownUntil) {
+      setFipToggleState(track.news?.news_active === true);
+    }
     queueNowPlaying(track);
   } catch (_error) {
     if (!nowPlayingHasTrack) renderNowPlaying({ available: false });

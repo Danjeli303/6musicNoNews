@@ -10,7 +10,7 @@
 #define DEFAULT_ENDPOINT "tcp://127.0.0.1:5555"
 #define DEFAULT_FIP_VOLUME 0.85
 #define DEFAULT_FADE_MILLISECONDS 1200
-#define COMMAND_TIMEOUT_MILLISECONDS 2000
+#define COMMAND_TIMEOUT_MILLISECONDS 10000
 
 typedef enum {
     EVENT_NONE = 0,
@@ -92,6 +92,21 @@ static void mix_levels(double portion, int news_on, double fip_volume,
     *fip_level = news_on ? fip_volume * portion : fip_volume * (1.0 - portion);
 }
 
+static void interpolate_levels(double portion,
+                               double start_bbc_level, double start_fip_level,
+                               double target_bbc_level, double target_fip_level,
+                               double *bbc_level, double *fip_level)
+{
+    if (portion < 0.0)
+        portion = 0.0;
+    if (portion > 1.0)
+        portion = 1.0;
+    *bbc_level = start_bbc_level +
+                 (target_bbc_level - start_bbc_level) * portion;
+    *fip_level = start_fip_level +
+                 (target_fip_level - start_fip_level) * portion;
+}
+
 /* Return 1 for a fade to FIP, 0 for a fade to BBC, and -1 for no fade. */
 static int transition_for_event(NewsEvent event, int *schedule_active,
                                 int *news_active)
@@ -129,9 +144,15 @@ static int send_volume(void *socket, const char *target, double volume)
     return reply[0] == '0';
 }
 
-static int fade_mix(void *socket, int news_on, double fip_volume, int fade_milliseconds)
+static int fade_mix(void *socket, int news_on, double fip_volume,
+                    int fade_milliseconds,
+                    double *current_bbc_level, double *current_fip_level)
 {
-    int steps = fade_milliseconds / 50;
+    const double start_bbc_level = *current_bbc_level;
+    const double start_fip_level = *current_fip_level;
+    const double target_bbc_level = news_on ? 0.0 : 1.0;
+    const double target_fip_level = news_on ? fip_volume : 0.0;
+    int steps = fade_milliseconds / 20;
 
     if (steps < 1)
         steps = 1;
@@ -140,20 +161,21 @@ static int fade_mix(void *socket, int news_on, double fip_volume, int fade_milli
 
     for (int step = 1; step <= steps; ++step) {
         double bbc_level, fip_level;
-        struct timespec delay = {
-            fade_milliseconds / steps / 1000,
-            (fade_milliseconds / steps % 1000) * 1000000L,
-        };
 
-        mix_levels((double)step / steps, news_on, fip_volume,
-                   &bbc_level, &fip_level);
-        if (!send_volume(socket, "bbc", bbc_level) ||
-            !send_volume(socket, "fip", fip_level)) {
+        interpolate_levels((double)step / steps,
+                           start_bbc_level, start_fip_level,
+                           target_bbc_level, target_fip_level,
+                           &bbc_level, &fip_level);
+        if (!send_volume(socket, "bbc", bbc_level)) {
             fprintf(stderr, "Mixer control command failed: %s\n", zmq_strerror(errno));
             return 0;
         }
-        while (nanosleep(&delay, &delay) && errno == EINTR) {
+        *current_bbc_level = bbc_level;
+        if (!send_volume(socket, "fip", fip_level)) {
+            fprintf(stderr, "Mixer control command failed: %s\n", zmq_strerror(errno));
+            return 0;
         }
+        *current_fip_level = fip_level;
     }
     return 1;
 }
@@ -207,6 +229,8 @@ int main(int argc, char **argv)
     int news_active = 0;
     int schedule_active = 0;
     long long last_sample = 0;
+    double current_bbc_level = 1.0;
+    double current_fip_level = 0.0;
 
     if (argc < 2 || argc > 6) {
         usage(argv[0]);
@@ -237,12 +261,9 @@ int main(int argc, char **argv)
     {
         int timeout = COMMAND_TIMEOUT_MILLISECONDS;
         int linger = 0;
-        int enabled = 1;
         zmq_setsockopt(socket, ZMQ_RCVTIMEO, &timeout, sizeof(timeout));
         zmq_setsockopt(socket, ZMQ_SNDTIMEO, &timeout, sizeof(timeout));
         zmq_setsockopt(socket, ZMQ_LINGER, &linger, sizeof(linger));
-        zmq_setsockopt(socket, ZMQ_REQ_RELAXED, &enabled, sizeof(enabled));
-        zmq_setsockopt(socket, ZMQ_REQ_CORRELATE, &enabled, sizeof(enabled));
     }
     if (zmq_connect(socket, endpoint) != 0) {
         fprintf(stderr, "Could not connect mixer control to %s: %s\n",
@@ -267,12 +288,16 @@ int main(int argc, char **argv)
                                           &news_active);
         if (transition == 1) {
             sleep_milliseconds(parsed.delay_milliseconds);
-            write_status(status_path, 1, last_sample);
-            fade_mix(socket, 1, fip_volume, fade_out_milliseconds);
+            if (!fade_mix(socket, 1, fip_volume, fade_out_milliseconds,
+                          &current_bbc_level, &current_fip_level))
+                news_active = current_fip_level > fip_volume / 2.0;
+            write_status(status_path, news_active, last_sample);
         } else if (transition == 0) {
             sleep_milliseconds(parsed.delay_milliseconds);
-            fade_mix(socket, 0, fip_volume, fade_in_milliseconds);
-            write_status(status_path, 0, last_sample);
+            if (!fade_mix(socket, 0, fip_volume, fade_in_milliseconds,
+                          &current_bbc_level, &current_fip_level))
+                news_active = current_fip_level > fip_volume / 2.0;
+            write_status(status_path, news_active, last_sample);
         }
     }
 

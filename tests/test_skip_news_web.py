@@ -775,6 +775,8 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('id="fip-toggle"', html)
         self.assertIn('role="switch"', html)
         self.assertIn('fetch("/api/fip-toggle"', app)
+        self.assertIn("fipToggleCooldownUntil = Date.now() + 30000", app)
+        self.assertIn("fipToggle.disabled = true", app)
         self.assertIn('.fip-toggle[aria-checked="true"]', styles)
         self.assertIn('fetch("/api/now-playing"', app)
         self.assertIn("setInterval(loadNowPlaying, 5000)", app)

@@ -198,7 +198,8 @@ hold the audio gate open. The controller atomically writes `news-status.json`,
 which tells the web service when to show FIP programme, track, and artwork
 metadata. The live-player FIP switch writes manual `news_on` and `news_off`
 events to the same control FIFO, so it uses the same fades as automatic news
-replacement.
+replacement. After each use it is disabled for 30 seconds while the stream
+transition reaches listeners.
 
 AWS deployment notes are in [docs/aws-deploy.md](docs/aws-deploy.md). The Alexa
 skill scaffold is in [alexa-skill/README.md](alexa-skill/README.md).

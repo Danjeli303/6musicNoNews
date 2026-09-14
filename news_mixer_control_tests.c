@@ -50,6 +50,10 @@ static void test_crossfade_levels(void)
     mix_levels(1.0, 0, 0.8, &bbc, &fip);
     EXPECT_NEAR(1.0, bbc);
     EXPECT_NEAR(0.0, fip);
+
+    interpolate_levels(0.5, 0.8, 0.2, 0.0, 0.8, &bbc, &fip);
+    EXPECT_NEAR(0.4, bbc);
+    EXPECT_NEAR(0.5, fip);
 }
 
 static void test_news_off_controls_return_to_bbc(void)
