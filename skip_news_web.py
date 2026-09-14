@@ -300,13 +300,14 @@ def get_iplayer_schedule_from_output(output):
             continue
         _, pid, title, subtitle, available, duration, image_url, web_url = parts
         try:
-            start = datetime.fromisoformat(available).astimezone(timezone.utc)
+            available_at = datetime.fromisoformat(available).astimezone(timezone.utc)
             duration_seconds = int(duration)
         except (TypeError, ValueError):
             continue
         if not PID_PATTERN.fullmatch(pid) or duration_seconds < 1:
             continue
-        end = start.timestamp() + duration_seconds
+        end = available_at.timestamp()
+        start = end - duration_seconds
         programmes.append(
             {
                 "available": True,
@@ -315,9 +316,9 @@ def get_iplayer_schedule_from_output(output):
                 "subtitle": _clean_text(subtitle) or "",
                 "presenter": _clean_text(title) or "BBC Radio 6 Music",
                 "image_url": _bbc_image_url(image_url),
-                "start_time": start.isoformat(),
+                "start_time": datetime.fromtimestamp(start, timezone.utc).isoformat(),
                 "end_time": datetime.fromtimestamp(end, timezone.utc).isoformat(),
-                "start_timestamp": start.timestamp(),
+                "start_timestamp": start,
                 "end_timestamp": end,
                 "url": _clean_text(web_url, limit=1000) or "",
                 "schedule_url": BBC_6MUSIC_SCHEDULE_URL,

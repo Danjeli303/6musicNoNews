@@ -286,16 +286,18 @@ class ScheduleTests(unittest.TestCase):
             at=skip_news_web.datetime.fromisoformat("2026-09-14T10:30:00+00:00"),
         )
 
-        self.assertEqual(current["pid"], "m00318j6")
-        self.assertEqual(current["title"], "Nick Grimshaw")
-        self.assertEqual(current["subtitle"], "Guests, chat and really good songs")
+        self.assertEqual(current["pid"], "m00318j8")
+        self.assertEqual(current["title"], "Lauren Laverne")
+        self.assertEqual(current["subtitle"], "Words from Gemma Cairney")
         self.assertEqual(
             current["image_url"],
-            "https://ichef.bbci.co.uk/images/ic/640x640/p0m53m3f.jpg",
+            "https://ichef.bbci.co.uk/images/ic/640x640/p0m53ld7.jpg",
         )
+        self.assertEqual(current["start_time"], "2026-09-14T09:00:00+00:00")
+        self.assertEqual(current["end_time"], "2026-09-14T12:00:00+00:00")
         self.assertNotIn("start_timestamp", current)
 
-    def test_schedule_service_refreshes_at_most_once_per_hour(self):
+    def test_schedule_service_refreshes_once_per_hour(self):
         with tempfile.TemporaryDirectory() as output_dir:
             service = skip_news_web.BBCScheduleService(output_dir)
             calls = []
@@ -309,12 +311,15 @@ class ScheduleTests(unittest.TestCase):
             self.assertTrue(service.get(at=at)["available"])
             self.assertTrue(service.get(at=at)["available"])
             self.assertEqual(len(calls), 1)
+            service.cached_at -= service.cache_seconds + 1
+            self.assertTrue(service.get(at=at)["available"])
+            self.assertEqual(len(calls), 2)
 
     def test_bridges_a_short_gap_in_get_iplayer_schedule(self):
         programmes = skip_news_web.get_iplayer_schedule_from_output(self.OUTPUT)
         current = skip_news_web.current_schedule_programme(
             programmes,
-            at=skip_news_web.datetime.fromisoformat("2026-09-14T15:30:00+00:00"),
+            at=skip_news_web.datetime.fromisoformat("2026-09-14T12:30:00+00:00"),
         )
 
         self.assertEqual(current["title"], "Lauren Laverne")
