@@ -200,6 +200,15 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
   background: var(--sounds-light);
 }
 
+.live-section.is-fip { background: #e2007a; }
+.live-section.is-fip .station-mark { background: #4b0029; border-color: #7c2756; }
+.live-section.is-fip .station-mark b { color: #ff80c3; }
+.live-section.is-fip .on-air i { background: #ff80c3; box-shadow: 0 0 0 4px rgba(226, 0, 122, 0.22); }
+.is-fip-live .header-artwork,
+.is-fip-live .now-playing-artwork { color: #ff80c3; background: #4b0029; }
+.is-fip-live .header-track-copy p,
+.is-fip-live .now-playing-copy p { color: #ff80c3; }
+
 .on-air {
   display: inline-flex;
   align-items: center;

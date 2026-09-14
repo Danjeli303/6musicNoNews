@@ -148,6 +148,11 @@ typedef struct {
     int iterations;
 } DetectionLoopCall;
 
+typedef struct {
+    const ProgramConfig *config;
+    ProgramState *state;
+} SilencingEventCall;
+
 static int test_read_byte(void *context)
 {
     TestByteReader *reader = (TestByteReader *)context;
@@ -289,6 +294,49 @@ done:
     if (output_file) fclose(output_file);
     if (stderr_file) fclose(stderr_file);
     return run;
+}
+
+static char *capture_stderr_from_call(CapturedCall call, void *context)
+{
+    FILE *stderr_file = tmpfile();
+    int saved_stderr;
+    long output_size;
+    char *output = NULL;
+
+    EXPECT_TRUE(stderr_file != NULL);
+    if (!stderr_file)
+        return NULL;
+
+    fflush(stderr);
+    saved_stderr = dup(fileno(stderr));
+    EXPECT_TRUE(saved_stderr >= 0);
+    if (saved_stderr < 0)
+        goto done;
+
+    EXPECT_TRUE(dup2(fileno(stderr_file), fileno(stderr)) >= 0);
+    call(context);
+    fflush(stderr);
+
+    output_size = ftell(stderr_file);
+    EXPECT_TRUE(output_size >= 0);
+    if (output_size >= 0) {
+        output = malloc((size_t)output_size + 1);
+        EXPECT_TRUE(output != NULL);
+        if (output) {
+            rewind(stderr_file);
+            EXPECT_EQ_SIZE((size_t)output_size,
+                           fread(output, 1, (size_t)output_size, stderr_file));
+            output[output_size] = '\0';
+        }
+    }
+
+    EXPECT_TRUE(dup2(saved_stderr, fileno(stderr)) >= 0);
+    clearerr(stderr);
+    close(saved_stderr);
+
+done:
+    fclose(stderr_file);
+    return output;
 }
 
 static CapturedRun run_silencer_with_input(int argc, char **argv, const int16_t *input, size_t frames, int channels)
@@ -587,6 +635,7 @@ static void test_command_line_parsing(void)
         "2026-06-20T18:38:11.200Z",
         "-w0-5,20-30,30-40",
         "-z+01:00",
+        "-g",
         "-q"
     };
 
@@ -610,6 +659,7 @@ static void test_command_line_parsing(void)
     EXPECT_EQ_INT(30, config.time_restriction_window.ranges[2].start_minute);
     EXPECT_EQ_INT(40, config.time_restriction_window.ranges[2].end_minute);
     EXPECT_EQ_INT(1, config.quiet_mode);
+    EXPECT_EQ_INT(1, config.gate_output_enabled);
 }
 
 static void test_command_line_parsing_accepts_schedule_file(void)
@@ -1341,6 +1391,63 @@ static void test_program_main_pass_all_mono_input(void)
     free(run.output);
 }
 
+static void test_program_main_gate_channel_marks_silenced_audio(void)
+{
+    int16_t input[] = { 1000, -1000 };
+    int16_t expected[] = {
+        0, 0, INT16_MAX,
+        0, 0, INT16_MAX
+    };
+    char arg0[] = "silencer";
+    char arg1[] = "-n";
+    char arg2[] = "-g";
+    char arg3[] = "-q";
+    char arg4[] = "-c1";
+    char arg5[] = "-s11025";
+    char *argv[] = { arg0, arg1, arg2, arg3, arg4, arg5 };
+    CapturedRun run = run_silencer_with_input(6, argv, input, 2, 1);
+
+    EXPECT_EQ_INT(0, run.status);
+    EXPECT_EQ_SIZE(sizeof(expected), run.output_size);
+    if (run.output)
+        EXPECT_MEMEQ(expected, run.output, sizeof(expected));
+    free(run.output);
+}
+
+static void call_report_silencing_transitions(void *context)
+{
+    SilencingEventCall *call = (SilencingEventCall *)context;
+
+    report_silencing_state(call->config, call->state, 0);
+    call->state->samples_output_audible = 12;
+    report_silencing_state(call->config, call->state, 1);
+    report_silencing_state(call->config, call->state, 1);
+    call->state->samples_output_silenced = 8;
+    report_silencing_state(call->config, call->state, 0);
+}
+
+static void test_silencing_transition_events(void)
+{
+    ProgramConfig config;
+    ProgramState state;
+    SilencingEventCall call = { &config, &state };
+    char *events;
+
+    initialize_program_config(&config);
+    memset(&state, 0, sizeof(state));
+    state.output_silencing_state = -1;
+    events = capture_stderr_from_call(call_report_silencing_transitions, &call);
+
+    EXPECT_TRUE(events != NULL);
+    if (events) {
+        EXPECT_STREQ(
+            "SILENCER_EVENT state=on sample=12\n"
+            "SILENCER_EVENT state=off sample=20\n",
+            events);
+    }
+    free(events);
+}
+
 int main(void)
 {
     test_calendar_helpers();
@@ -1367,6 +1474,8 @@ int main(void)
     test_write_confirmed_audio_keepalive();
     test_flush_remaining_audio();
     test_program_main_pass_all_mono_input();
+    test_program_main_gate_channel_marks_silenced_audio();
+    test_silencing_transition_events();
 
     if (tests_failed) {
         fprintf(stderr, "%d of %d silencer tests failed\n", tests_failed, tests_run);

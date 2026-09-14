@@ -266,6 +266,91 @@ class NowPlayingTests(unittest.TestCase):
             skip_news_web.DEFAULT_NOW_PLAYING_DELAY_SECONDS,
         )
 
+    def test_normalizes_fip_track_programme_and_artwork(self):
+        result = skip_news_web.fip_now_playing_from_payload(
+            {
+                "prev": [
+                    {
+                        "firstLine": "FIP",
+                        "cover": "34e98566-058b-428f-a39e-d74bdef1cf77",
+                    }
+                ],
+                "now": {
+                    "firstLine": "Club Jazzafip",
+                    "secondLine": "Anna Erhard • Spa",
+                    "cover": "39558008-e0cb-40cd-978c-604a63eff4c2",
+                    "startTime": 1789383015,
+                    "endTime": 1789383185,
+                },
+                "next": [],
+                "delayToRefresh": 150000,
+            }
+        )
+
+        self.assertTrue(result["available"])
+        self.assertTrue(result["now_playing"])
+        self.assertEqual(result["source"], "FIP")
+        self.assertEqual(result["artist"], "Anna Erhard")
+        self.assertEqual(result["title"], "Spa")
+        self.assertEqual(result["programme"], "Club Jazzafip")
+        self.assertEqual(result["show"]["title"], "Club Jazzafip")
+        self.assertEqual(
+            result["image_url"],
+            "https://www.radiofrance.fr/pikapi/images/"
+            "39558008-e0cb-40cd-978c-604a63eff4c2/640",
+        )
+        self.assertEqual(
+            result["programme_image_url"],
+            "https://www.radiofrance.fr/pikapi/images/"
+            "34e98566-058b-428f-a39e-d74bdef1cf77/640",
+        )
+
+    def test_rejects_untrusted_fip_artwork(self):
+        result = skip_news_web.fip_now_playing_from_payload(
+            {
+                "now": {
+                    "firstLine": "FIP",
+                    "secondLine": "Artist • Track",
+                    "cover": "https://example.com/untrusted.jpg",
+                }
+            }
+        )
+
+        self.assertIsNone(result["image_url"])
+
+
+class SilencerStatusTests(unittest.TestCase):
+    def test_reads_fresh_silencing_state(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            path = Path(output_dir) / "silencer-status.json"
+            path.write_text(
+                '{"silencing":true,"sample":48000,"updated_at_unix":100}',
+                encoding="utf-8",
+            )
+            service = skip_news_web.SilencerStatusService(path, max_age_seconds=10)
+
+            self.assertEqual(
+                service.get(now=105),
+                {
+                    "silencing": True,
+                    "sample": 48000,
+                    "updated_at_unix": 100,
+                    "fresh": True,
+                },
+            )
+
+    def test_treats_missing_or_stale_state_as_off(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            path = Path(output_dir) / "silencer-status.json"
+            service = skip_news_web.SilencerStatusService(path, max_age_seconds=10)
+            self.assertFalse(service.get(now=105)["silencing"])
+
+            path.write_text(
+                '{"silencing":true,"sample":1,"updated_at_unix":100}',
+                encoding="utf-8",
+            )
+            self.assertFalse(service.get(now=111)["silencing"])
+
 
 class ScheduleTests(unittest.TestCase):
     OUTPUT = (
@@ -659,6 +744,10 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn("activeMediaPlayer === radioPlayer", app)
         self.assertIn("renderHeaderHistory(entry", app)
         self.assertIn("renderHeaderProgramme(currentLiveProgramme)", app)
+        self.assertIn('stationName(track) === "FIP"', app)
+        self.assertIn('classList.toggle("is-fip-live", isFip)', app)
+        self.assertIn('id="live-description"', html)
+        self.assertIn(".live-section.is-fip", styles)
         self.assertNotIn("renderLiveProgramme(currentLiveProgramme)", app)
         self.assertIn("radioStatus.textContent = liveProgrammeStatus()", app)
         self.assertIn("grid-template-columns: 190px minmax(0, 1fr)", styles)
@@ -674,6 +763,17 @@ class DeploymentTests(unittest.TestCase):
         self.assertGreater((vendor_dir / "video.min.js").stat().st_size, 100_000)
         self.assertTrue((vendor_dir / "video-js.min.css").is_file())
         self.assertTrue((vendor_dir / "LICENSE").is_file())
+
+    def test_fip_is_sample_gated_and_status_is_shared_with_web(self):
+        script = (ROOT / "radio6music_noNews_hls.sh").read_text(encoding="utf-8")
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+        self.assertIn('"$SILENCER" -e -g -t -x', script)
+        self.assertIn("[fip][gate]amultiply[fipgated]", script)
+        self.assertNotIn("sidechaincompress", script)
+        self.assertIn("SILENCER_EVENT state=on sample=", script)
+        self.assertIn("SILENCER_STATUS_FILE: /srv/hls/silencer-status.json", compose)
+        self.assertIn("- hls_data:/srv/hls:ro", compose)
 
     def test_favourites_use_a_shared_lastfm_compatible_store(self):
         html = (ROOT / "web/index.html").read_text(encoding="utf-8")

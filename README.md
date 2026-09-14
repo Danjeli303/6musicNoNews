@@ -108,7 +108,8 @@ docker compose up -d --build
 
 Open `https://PUBLIC_HOST/`. The page provides:
 
-- the news-skipped live stream with BBC track metadata
+- the news-skipped live stream with BBC metadata during normal playback
+- FIP programme, track, and artwork metadata while FIP replaces silenced news
 - BBC Sounds programme processing with progress
 - playback, download, and removal of completed programmes
 - current-track details during live and processed playback
@@ -135,7 +136,9 @@ header. Favourites use a Last.fm-compatible track shape in browser storage; no
 Last.fm account or API key is required yet.
 
 Set `BBC_NOW_PLAYING_URL` to override the BBC metadata endpoint or
-`BBC_NOW_PLAYING_DELAY_SECONDS` to adjust the default 18-second display delay.
+`FIP_NOW_PLAYING_URL` to override Radio France's public live-metadata endpoint.
+Set `BBC_NOW_PLAYING_DELAY_SECONDS` to adjust the default 18-second display
+delay shared by both sources so the information follows the HLS audio.
 
 For host-only use without Docker:
 
@@ -171,6 +174,17 @@ default. Useful environment variables:
 - `NEWS_SCHEDULE`
 - `BBC_URL`
 - `FIP_URL`
+- `FIP_VOLUME`
+- `FIP_NOW_PLAYING_URL`
+- `SILENCER_STATUS_FILE`
+
+The live script runs `silencer` with `-g`. Its normal stereo output gains a
+third, full-scale control channel only while audio is being silenced. FFmpeg
+multiplies FIP by that channel, providing a sample-aligned gate rather than
+guessing from the BBC audio level. `silencer` also writes
+`SILENCER_EVENT state=on|off sample=...` transitions to standard error. The
+script converts those transitions into the atomic `silencer-status.json` file
+used by the web service.
 
 AWS deployment notes are in [docs/aws-deploy.md](docs/aws-deploy.md). The Alexa
 skill scaffold is in [alexa-skill/README.md](alexa-skill/README.md).
@@ -197,7 +211,8 @@ make sample-recording-test
 - `skipper.c`: original skip/remove filter with schedule-aware fast passthrough
   outside news windows.
 - `silencer.c`: same classifier path, but writes silence instead of shortening
-  the stream; also bypasses analysis outside scheduled windows while preserving
+  the stream; emits silencing transitions and can add a sample-aligned gate
+  channel; also bypasses analysis outside scheduled windows while preserving
   timing delay.
 - `skipper_time.c` / `skipper_time.h`: ISO-8601 parsing, UTC offset parsing,
   INI schedule parsing, and active-window checks.

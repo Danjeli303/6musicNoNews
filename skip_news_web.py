@@ -62,6 +62,18 @@ BBC_NOW_PLAYING_URL = (
     "https://rms.api.bbc.co.uk/v2/services/bbc_6music/segments/latest"
     "?experience=domestic&offset=0&limit=4"
 )
+FIP_NOW_PLAYING_URL = (
+    "https://api.radiofrance.fr/livemeta/live/7/transistor_musical_player"
+)
+FIP_WEB_URL = "https://www.radiofrance.fr/fip"
+FIP_IMAGE_HOST = "www.radiofrance.fr"
+FIP_COVER_PATTERN = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+DEFAULT_SILENCER_STATUS_FILE = (
+    BASE_DIR / "hls_radio6music_noNews" / "silencer-status.json"
+)
 BBC_6MUSIC_SCHEDULE_URL = "https://www.bbc.co.uk/sounds/schedules/bbc_6music"
 BBC_IMAGE_HOST = "ichef.bbci.co.uk"
 DEFAULT_NOW_PLAYING_DELAY_SECONDS = 18
@@ -91,6 +103,22 @@ def _bbc_image_url(value):
     return value.replace("{recipe}", "640x640").replace(
         "/images/ic/192xn/", "/images/ic/640x640/"
     )
+
+
+def _radiofrance_image_url(value):
+    value = _clean_text(value, limit=1000)
+    if not value:
+        return None
+    if FIP_COVER_PATTERN.fullmatch(value):
+        return f"https://www.radiofrance.fr/pikapi/images/{value}/640"
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme == "https"
+        and parsed.hostname == FIP_IMAGE_HOST
+        and parsed.path.startswith("/pikapi/images/")
+    ):
+        return value
+    return None
 
 
 def bbc_now_playing_from_payload(payload):
@@ -133,6 +161,60 @@ def bbc_now_playing_from_payload(payload):
         "artist": artist,
         "title": title,
         "image_url": _bbc_image_url(item.get("image_url")),
+        "source": "BBC Radio 6 Music",
+        "station": "BBC Radio 6 Music",
+        "silencing": False,
+    }
+
+
+def fip_now_playing_from_payload(payload):
+    """Normalize Radio France's public FIP live metadata response."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("now"), dict):
+        raise ValueError("The FIP metadata response was invalid.")
+
+    item = payload["now"]
+    programme = _clean_text(item.get("firstLine")) or "FIP"
+    music = _clean_text(item.get("secondLine"))
+    artist = None
+    title = music
+    if music and " • " in music:
+        artist, title = (_clean_text(part) for part in music.split(" • ", 1))
+
+    image_url = _radiofrance_image_url(item.get("cover"))
+    station_image_url = None
+    previous = payload.get("prev") if isinstance(payload.get("prev"), list) else []
+    following = payload.get("next") if isinstance(payload.get("next"), list) else []
+    for candidate in [*previous, *following]:
+        if not isinstance(candidate, dict):
+            continue
+        if _clean_text(candidate.get("firstLine")) == "FIP":
+            station_image_url = _radiofrance_image_url(candidate.get("cover"))
+            if station_image_url:
+                break
+    programme_image_url = station_image_url or image_url
+    available = bool(artist or title)
+    return {
+        "available": available,
+        "now_playing": available,
+        "artist": artist,
+        "title": title,
+        "album": _clean_text(item.get("thirdLine")),
+        "image_url": image_url,
+        "source": "FIP",
+        "station": "FIP",
+        "silencing": True,
+        "programme": programme,
+        "presenter": "FIP",
+        "programme_image_url": programme_image_url,
+        "show": {
+            "available": True,
+            "title": programme,
+            "subtitle": "Live on FIP",
+            "presenter": "FIP",
+            "image_url": programme_image_url,
+            "url": FIP_WEB_URL,
+            "schedule_url": FIP_WEB_URL,
+        },
     }
 
 
@@ -172,6 +254,68 @@ class BBCNowPlayingService:
             self.cached = result
             self.cached_at = now
             return dict(result)
+
+
+class FIPNowPlayingService:
+    """Fetch and briefly cache FIP's public live metadata."""
+
+    def __init__(self, endpoint=FIP_NOW_PLAYING_URL, cache_seconds=4):
+        self.endpoint = endpoint
+        self.cache_seconds = cache_seconds
+        self.lock = threading.Lock()
+        self.cached = None
+        self.cached_at = 0.0
+
+    def get(self):
+        with self.lock:
+            now = time.monotonic()
+            if self.cached is not None and now - self.cached_at < self.cache_seconds:
+                return dict(self.cached)
+            request = Request(
+                self.endpoint,
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "6MusicNewsSkipper/1.0",
+                },
+            )
+            try:
+                with urlopen(request, timeout=5) as response:
+                    raw = response.read(1_000_001)
+                if len(raw) > 1_000_000:
+                    raise ValueError("The FIP metadata response was too large.")
+                result = fip_now_playing_from_payload(json.loads(raw.decode("utf-8")))
+            except NOW_PLAYING_FETCH_ERRORS:
+                if self.cached is not None:
+                    self.cached_at = now
+                    return dict(self.cached)
+                raise
+            self.cached = result
+            self.cached_at = now
+            return dict(result)
+
+
+class SilencerStatusService:
+    """Read the streamer's atomic silencer-state file."""
+
+    def __init__(self, path, max_age_seconds=600):
+        self.path = Path(path).resolve()
+        self.max_age_seconds = max(1, float(max_age_seconds))
+
+    def get(self, now=None):
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            updated_at = int(payload.get("updated_at_unix"))
+            sample = max(0, int(payload.get("sample", 0)))
+            current_time = time.time() if now is None else float(now)
+            fresh = 0 <= current_time - updated_at <= self.max_age_seconds
+            return {
+                "silencing": payload.get("silencing") is True and fresh,
+                "sample": sample,
+                "updated_at_unix": updated_at,
+                "fresh": fresh,
+            }
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return {"silencing": False, "fresh": False}
 
 
 class FavouriteStore:
@@ -1076,7 +1220,7 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data: https://ichef.bbci.co.uk; "
+            "img-src 'self' data: https://ichef.bbci.co.uk https://www.radiofrance.fr; "
             "font-src 'self' data:; connect-src 'self'; "
             "media-src 'self' blob:; worker-src 'self' blob:; base-uri 'none'; "
             "form-action 'self'; frame-ancestors 'none'",
@@ -1250,28 +1394,57 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
         elif path == "/api/jobs":
             self._send_json(HTTPStatus.OK, self.server.job_store.list_jobs())
         elif path == "/api/now-playing":
-            try:
-                payload = self.server.now_playing_service.get()
-            except NOW_PLAYING_FETCH_ERRORS:
-                payload = {"available": False, "now_playing": False}
-            try:
-                programme = self.server.schedule_service.get()
-            except (OSError, RuntimeError, subprocess.SubprocessError):
-                programme = {
-                    "available": False,
-                    "schedule_url": BBC_6MUSIC_SCHEDULE_URL,
-                }
-            payload["show"] = programme
-            if programme.get("available"):
-                payload.update(
-                    {
-                        "programme_pid": programme["pid"],
-                        "programme": programme["title"],
-                        "programme_subtitle": programme["subtitle"],
-                        "presenter": programme["presenter"],
-                        "programme_image_url": programme["image_url"],
+            silencer = self.server.silencer_status_service.get()
+            if silencer["silencing"]:
+                try:
+                    payload = self.server.fip_now_playing_service.get()
+                except NOW_PLAYING_FETCH_ERRORS:
+                    payload = {
+                        "available": False,
+                        "now_playing": False,
+                        "source": "FIP",
+                        "station": "FIP",
+                        "silencing": True,
+                        "show": {
+                            "available": True,
+                            "title": "FIP",
+                            "subtitle": "Live on FIP",
+                            "presenter": "FIP",
+                            "image_url": None,
+                            "url": FIP_WEB_URL,
+                            "schedule_url": FIP_WEB_URL,
+                        },
                     }
-                )
+            else:
+                try:
+                    payload = self.server.now_playing_service.get()
+                except NOW_PLAYING_FETCH_ERRORS:
+                    payload = {
+                        "available": False,
+                        "now_playing": False,
+                        "source": "BBC Radio 6 Music",
+                        "station": "BBC Radio 6 Music",
+                        "silencing": False,
+                    }
+                try:
+                    programme = self.server.schedule_service.get()
+                except (OSError, RuntimeError, subprocess.SubprocessError):
+                    programme = {
+                        "available": False,
+                        "schedule_url": BBC_6MUSIC_SCHEDULE_URL,
+                    }
+                payload["show"] = programme
+                if programme.get("available"):
+                    payload.update(
+                        {
+                            "programme_pid": programme["pid"],
+                            "programme": programme["title"],
+                            "programme_subtitle": programme["subtitle"],
+                            "presenter": programme["presenter"],
+                            "programme_image_url": programme["image_url"],
+                        }
+                    )
+            payload["silencer"] = silencer
             payload["display_delay_seconds"] = self.server.now_playing_delay_seconds
             self._send_json(HTTPStatus.OK, payload)
         elif path == "/api/favourites":
@@ -1373,6 +1546,15 @@ class SkipNewsServer(ThreadingHTTPServer):
         )
         self.now_playing_service = BBCNowPlayingService(
             os.environ.get("BBC_NOW_PLAYING_URL", BBC_NOW_PLAYING_URL)
+        )
+        self.fip_now_playing_service = FIPNowPlayingService(
+            os.environ.get("FIP_NOW_PLAYING_URL", FIP_NOW_PLAYING_URL)
+        )
+        self.silencer_status_service = SilencerStatusService(
+            os.environ.get(
+                "SILENCER_STATUS_FILE", str(DEFAULT_SILENCER_STATUS_FILE)
+            ),
+            os.environ.get("SILENCER_STATUS_MAX_AGE_SECONDS", "600"),
         )
         self.schedule_service = BBCScheduleService(
             job_store.output_dir / ".get_iplayer_schedule",

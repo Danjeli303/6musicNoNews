@@ -12,12 +12,9 @@ OUT_DIR="${OUT_DIR:-$SCRIPT_DIR/hls_radio6music_noNews}"
 PLAYLIST="$OUT_DIR/radio6music_noNews.m3u8"
 SEGMENT_PATTERN="$OUT_DIR/radio6music_noNews_%05d.ts"
 LOG="$OUT_DIR/radio6music_noNews_hls.log"
+SILENCER_STATUS_FILE="${SILENCER_STATUS_FILE:-$OUT_DIR/silencer-status.json}"
 
 FIP_VOLUME="${FIP_VOLUME:-0.85}"
-DUCK_THRESHOLD="${DUCK_THRESHOLD:-0.002}"
-DUCK_RATIO="${DUCK_RATIO:-20}"
-FIP_FADE_OUT_MS="${FIP_FADE_OUT_MS:-700}"
-FIP_FADE_IN_MS="${FIP_FADE_IN_MS:-1800}"
 HLS_AUDIO_BITRATE="${HLS_AUDIO_BITRATE:-128k}"
 HLS_AAC_CODER="${HLS_AAC_CODER:-fast}"
 HLS_TIME="${HLS_TIME:-6}"
@@ -40,9 +37,13 @@ require_command() {
 }
 
 ensure_silencer() {
-    if [ ! -x "$SILENCER" ]; then
-        require_command make
-        make -C "$SCRIPT_DIR" silencer
+    if command -v make >/dev/null 2>&1; then
+        if ! make -C "$SCRIPT_DIR" -q silencer >/dev/null 2>&1; then
+            make -C "$SCRIPT_DIR" silencer
+        fi
+    elif [ ! -x "$SILENCER" ]; then
+        printf 'Error: silencer must be built, but make was not found.\n' >&2
+        exit 1
     fi
 
     if [ ! -x "$SILENCER" ]; then
@@ -68,10 +69,57 @@ get_stream_start_time() {
 }
 
 mix_with_fip_filter() {
-    printf '[0:a]aformat=sample_fmts=fltp:channel_layouts=stereo,asplit=2[bbc][sc];'
+    printf '[0:a]asplit=2[bbc3][gate3];'
+    printf '[bbc3]pan=stereo|c0=c0|c1=c1,aformat=sample_fmts=fltp:channel_layouts=stereo[bbc];'
+    printf '[gate3]pan=stereo|c0=c2|c1=c2,aformat=sample_fmts=fltp:channel_layouts=stereo[gate];'
     printf '[1:a]aresample=%s,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=%s[fip];' "$SAMPLE_RATE" "$FIP_VOLUME"
-    printf '[fip][sc]sidechaincompress=threshold=%s:ratio=%s:attack=%s:release=%s:makeup=1:link=maximum:detection=rms[fipduck];' "$DUCK_THRESHOLD" "$DUCK_RATIO" "$FIP_FADE_OUT_MS" "$FIP_FADE_IN_MS"
-    printf '[bbc][fipduck]amix=inputs=2:duration=first:normalize=0:dropout_transition=0,alimiter=limit=0.95,aresample=async=1000:first_pts=0[out]'
+    printf '[fip][gate]amultiply[fipgated];'
+    printf '[bbc][fipgated]amix=inputs=2:duration=first:normalize=0:dropout_transition=0,alimiter=limit=0.95,aresample=async=1000:first_pts=0[out]'
+}
+
+write_silencer_status() {
+    silencing=$1
+    sample=$2
+    status_tmp="$SILENCER_STATUS_FILE.tmp.$$"
+    printf '{"silencing":%s,"sample":%s,"updated_at_unix":%s}\n' \
+      "$silencing" "$sample" "$(date +%s)" >"$status_tmp"
+    mv "$status_tmp" "$SILENCER_STATUS_FILE"
+}
+
+monitor_silencer_events() {
+    event_pipe=$1
+    last_sample=0
+
+    while IFS= read -r line; do
+        printf '%s\n' "$line" >>"$LOG"
+        case "$line" in
+            "SILENCER_EVENT state=on sample="*)
+                last_sample=${line#*sample=}
+                write_silencer_status true "$last_sample"
+                ;;
+            "SILENCER_EVENT state=off sample="*)
+                last_sample=${line#*sample=}
+                write_silencer_status false "$last_sample"
+                ;;
+        esac
+    done <"$event_pipe"
+
+    write_silencer_status false "$last_sample"
+}
+
+start_silencer_event_monitor() {
+    SILENCER_EVENT_DIR=$(mktemp -d "${TMPDIR:-/tmp}/silencer-events.XXXXXX")
+    SILENCER_EVENT_PIPE="$SILENCER_EVENT_DIR/events.fifo"
+    mkfifo "$SILENCER_EVENT_PIPE"
+    write_silencer_status false 0
+    monitor_silencer_events "$SILENCER_EVENT_PIPE" &
+    SILENCER_EVENT_MONITOR_PID=$!
+}
+
+stop_silencer_event_monitor() {
+    wait "$SILENCER_EVENT_MONITOR_PID" || true
+    rm -f "$SILENCER_EVENT_PIPE"
+    rmdir "$SILENCER_EVENT_DIR"
 }
 
 ensure_output_dir() {
@@ -80,7 +128,7 @@ ensure_output_dir() {
 
 clean_output_dir() {
     ensure_output_dir
-    rm -f "$PLAYLIST" "$OUT_DIR"/radio6music_noNews_*.ts "$LOG"
+    rm -f "$PLAYLIST" "$OUT_DIR"/radio6music_noNews_*.ts "$LOG" "$SILENCER_STATUS_FILE"
 }
 
 ffmpeg_live_input_args() {
@@ -99,6 +147,8 @@ run_pipeline() {
         duration_args="-t $1"
     fi
 
+    start_silencer_event_monitor
+
     # live_start_index 0 matches FFmpeg's first decoded segment to the first
     # PROGRAM-DATE-TIME captured from the same media playlist.
     # shellcheck disable=SC2086
@@ -110,12 +160,12 @@ run_pipeline() {
       -i "$BBC_URL" \
       $duration_args \
       -f s16le -ar "$SAMPLE_RATE" -ac 2 pipe:1 2>>"$LOG" | \
-    "$SILENCER" -e -t -x -v20 -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" -w "$SILENCER_WINDOW" 2>>"$LOG" | \
+    "$SILENCER" -e -g -t -x -v20 -s"$SAMPLE_RATE" -T "$START_TIME" -z "$LONDON_UTC_OFFSET" -w "$SILENCER_WINDOW" 2>"$SILENCER_EVENT_PIPE" | \
     ffmpeg \
       -hide_banner \
       -loglevel warning \
       -re \
-      -f s16le -ar "$SAMPLE_RATE" -ac 2 -i pipe:0 \
+      -f s16le -ar "$SAMPLE_RATE" -ac 3 -channel_layout 2.1 -i pipe:0 \
       $(ffmpeg_live_input_args) \
       -i "$FIP_URL" \
       -filter_complex "$(mix_with_fip_filter)" \
@@ -130,6 +180,9 @@ run_pipeline() {
       -hls_flags append_list+delete_segments+program_date_time+omit_endlist+temp_file \
       -hls_segment_filename "$SEGMENT_PATTERN" \
       "$PLAYLIST" 2>>"$LOG"
+    pipeline_status=$?
+    stop_silencer_event_monitor
+    return "$pipeline_status"
 }
 
 run_check() {
@@ -141,8 +194,15 @@ run_check() {
         exit 1
     fi
 
-    if ! ls "$OUT_DIR"/radio6music_noNews_*.ts >/dev/null 2>&1; then
-        printf 'Error: HLS segments were not created in: %s\n' "$OUT_DIR" >&2
+    segment_found=0
+    for segment in "$OUT_DIR"/radio6music_noNews_*.ts; do
+        if [ -s "$segment" ]; then
+            segment_found=1
+            break
+        fi
+    done
+    if [ "$segment_found" -ne 1 ] || ! grep -q '^#EXTINF:' "$PLAYLIST"; then
+        printf 'Error: no playable HLS segment was created in: %s\n' "$OUT_DIR" >&2
         exit 1
     fi
 
