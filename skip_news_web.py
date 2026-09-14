@@ -524,7 +524,6 @@ def get_iplayer_programmes_from_output(output):
             }
         )
     programmes.sort(key=lambda item: item["available_at"], reverse=True)
-    programmes.sort(key=lambda item: item["title"].casefold())
     return programmes
 
 

@@ -382,6 +382,10 @@ class ProgrammeCatalogueTests(unittest.TestCase):
         "BBC Radio 6 Music|||2026-09-14T18:00:00+00:00|||7200|||"
         "https://ichef.bbci.co.uk/images/ic/192xn/p0m53m3f.jpg|||"
         "https://www.bbc.co.uk/programmes/m00318j6\n"
+        "SKIPPER_PROGRAMME|||m00318j8|||Lauren Laverne|||Latest show|||"
+        "BBC Radio 6 Music|||2026-09-15T12:00:00+00:00|||10800|||"
+        "https://ichef.bbci.co.uk/images/ic/192xn/p0m53ld7.jpg|||"
+        "https://www.bbc.co.uk/programmes/m00318j8\n"
         "SKIPPER_PROGRAMME|||m00318j7|||Other show|||Wrong station|||"
         "BBC Radio 4|||2026-09-14T19:00:00+00:00|||3600||||||\n"
     )
@@ -389,10 +393,11 @@ class ProgrammeCatalogueTests(unittest.TestCase):
     def test_parser_only_keeps_exact_6_music_programmes(self):
         programmes = skip_news_web.get_iplayer_programmes_from_output(self.OUTPUT)
 
-        self.assertEqual(len(programmes), 1)
-        self.assertEqual(programmes[0]["title"], "Gilles Peterson")
+        self.assertEqual(len(programmes), 2)
+        self.assertEqual(programmes[0]["title"], "Lauren Laverne")
+        self.assertEqual(programmes[1]["title"], "Gilles Peterson")
         self.assertEqual(
-            programmes[0]["url"],
+            programmes[1]["url"],
             "https://www.bbc.co.uk/sounds/play/m00318j6",
         )
 
@@ -724,6 +729,9 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('id="selected-tracklist"', html)
         self.assertIn("Music played in this show:", html)
         self.assertIn("/tracks`,", app)
+        self.assertIn("programme-option-date", app)
+        self.assertIn('year: "2-digit"', app)
+        self.assertIn("show-track-favourite", app)
 
     def test_caddy_routes_hls_and_web_on_the_same_host(self):
         caddyfile = (ROOT / "docker/caddy/Caddyfile").read_text(encoding="utf-8")

@@ -71,12 +71,23 @@ let visibleProgrammes = [];
 let activeProgrammeIndex = -1;
 let selectedProgrammeUrl = "";
 let tracklistRequestNumber = 0;
+let selectedTracks = [];
 
 function programmeOptionLabel(programme) {
   const detail = programme.episode && programme.episode !== programme.title
     ? ` — ${programme.episode}`
     : "";
   return `${programme.title}${detail}`;
+}
+
+function programmeDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Date unavailable";
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+  }).format(date);
 }
 
 function setProgrammeDropdownOpen(open) {
@@ -124,6 +135,7 @@ function clearSelectedTracklist() {
   selectedTracklist.hidden = true;
   selectedTracklistStatus.textContent = "";
   selectedTrackGrid.replaceChildren();
+  selectedTracks = [];
 }
 
 function trackTime(seconds) {
@@ -135,6 +147,7 @@ function trackTime(seconds) {
 }
 
 function renderSelectedTracks(tracks) {
+  selectedTracks = tracks;
   selectedTrackGrid.replaceChildren(
     ...tracks.map((track, index) => {
       const item = makeElement("article", "show-track offline-now-playing");
@@ -146,7 +159,12 @@ function renderSelectedTracks(tracks) {
       copy.append(title);
       const detail = [track.artist, track.album].filter(Boolean).join(" · ");
       copy.append(makeElement("span", "offline-track-artist", detail || "Artist unavailable"));
-      item.append(copy);
+      const favourite = makeElement("button", "favourite-button show-track-favourite");
+      favourite.type = "button";
+      favourite.dataset.trackIndex = String(index);
+      favourite.append(makeElement("span", "", "♡"));
+      updateFavouriteButton(favourite, track);
+      item.append(copy, favourite);
       return item;
     }),
   );
@@ -189,7 +207,13 @@ function renderProgrammeOptions(open = false) {
       option.setAttribute("aria-selected", "false");
       option.tabIndex = -1;
       option.dataset.index = String(index);
-      option.textContent = programmeOptionLabel(programme);
+      option.append(
+        makeElement("span", "programme-option-title", programme.title),
+        ...(programme.episode && programme.episode !== programme.title
+          ? [makeElement("span", "programme-option-episode", programme.episode)]
+          : []),
+        makeElement("span", "programme-option-date", programmeDate(programme.available_at)),
+      );
       return option;
     }),
   );
@@ -1142,6 +1166,14 @@ programmeOptions?.addEventListener("mousemove", (event) => {
   const option = event.target.closest("[role=option]");
   if (option) setActiveProgramme(Number(option.dataset.index));
 });
+selectedTrackGrid?.addEventListener("click", (event) => {
+  const favourite = event.target.closest("button[data-track-index]");
+  if (!favourite) return;
+  const track = selectedTracks[Number(favourite.dataset.trackIndex)];
+  if (!track) return;
+  window.SkipperFavourites.toggle(track);
+  updateFavouriteButton(favourite, track);
+});
 document.addEventListener("click", (event) => {
   if (!event.target.closest(".programme-combobox")) setProgrammeDropdownOpen(false);
 });
@@ -1210,6 +1242,12 @@ window.addEventListener("storage", () => {
   historyPlayers.forEach((entry) => {
     updateFavouriteButton(entry.favourite, entry.currentTrack);
   });
+  selectedTracks.forEach((track, index) => {
+    updateFavouriteButton(
+      selectedTrackGrid.querySelector(`[data-track-index="${index}"]`),
+      track,
+    );
+  });
 });
 
 window.addEventListener("skipper:favourites-changed", () => {
@@ -1220,6 +1258,12 @@ window.addEventListener("skipper:favourites-changed", () => {
   updateFavouriteButton(liveNowPlayingFavourite, currentLiveTrack);
   historyPlayers.forEach((entry) => {
     updateFavouriteButton(entry.favourite, entry.currentTrack);
+  });
+  selectedTracks.forEach((track, index) => {
+    updateFavouriteButton(
+      selectedTrackGrid.querySelector(`[data-track-index="${index}"]`),
+      track,
+    );
   });
 });
 

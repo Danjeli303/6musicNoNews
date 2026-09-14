@@ -162,6 +162,14 @@ input::placeholder { color: #646464; }
   line-height: 1.3;
   text-align: left;
 }
+.programme-options [role="option"] span { display: block; font-size: inherit; line-height: 1.3; }
+.programme-options .programme-option-title { font-size: 0.92rem; font-weight: 800; }
+.programme-options .programme-option-episode { margin-top: 2px; color: #555; font-size: 0.78rem; font-weight: 500; }
+.programme-options .programme-option-date { margin-top: 7px; color: #6b6b6b; font-size: 0.7rem; font-weight: 700; }
+.programme-options [role="option"]:hover .programme-option-episode,
+.programme-options [role="option"]:hover .programme-option-date,
+.programme-options [role="option"].is-active .programme-option-episode,
+.programme-options [role="option"].is-active .programme-option-date { color: #ddd; }
 .programme-options [role="option"]:last-child { border-bottom: 0; }
 .programme-options [role="option"]:hover,
 .programme-options [role="option"].is-active { color: #fff; background: #292929; }
@@ -229,8 +237,9 @@ button:disabled { cursor: wait; opacity: 0.65; }
 }
 
 .selected-tracklist-status { min-height: 1.2em; margin: 8px 0 18px; color: #ddd; font-size: 0.78rem; }
-.music-played-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.music-played-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .music-played-grid .offline-now-playing { margin: 0; }
+.show-track-favourite { width: 38px; height: 38px; font-size: 1.35rem; }
 
 .job-card {
   margin-bottom: 52px;
@@ -960,6 +969,7 @@ main section { scroll-margin-top: 88px; }
   nav a { white-space: nowrap; padding: 0 11px; font-size: 0.82rem; }
   h1 { font-size: clamp(2.7rem, 14vw, 4.4rem); }
   .input-row { grid-template-columns: 1fr; box-shadow: none; }
+  .music-played-grid { grid-template-columns: 1fr; }
   input { border-right: 3px solid #fff; }
   button { min-height: 58px; }
   .header-radio-toggle, .favourite-button.header-favourite { min-height: 0; }
