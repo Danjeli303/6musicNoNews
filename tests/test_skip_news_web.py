@@ -416,6 +416,46 @@ timeline: input_samples=250 output_samples=200 discarded_samples=50
             self.assertFalse(tracklist.exists())
             self.assertEqual(store.list_jobs()["history"], [])
 
+    def test_removes_original_audio_and_all_associated_sidecars(self):
+        with tempfile.TemporaryDirectory() as temp_root:
+            output_dir = Path(temp_root) / "output"
+            output_dir.mkdir()
+            processed = output_dir / "m0030yw7_newsskip.m4a"
+            original = output_dir / "m0030yw7.m4a"
+            other_version = output_dir / "m0030yw7_newsskip_2.m4a"
+            unrelated = output_dir / "unrelated.m4a"
+            associated = [
+                processed,
+                output_dir / "m0030yw7_newsskip.log",
+                output_dir / "m0030yw7_newsskip.artwork.jpg",
+                output_dir / "m0030yw7_newsskip.tracks.txt",
+                original,
+                output_dir / "m0030yw7.log",
+                output_dir / "m0030yw7.artwork.jpg",
+                output_dir / "m0030yw7.tracks.txt",
+            ]
+            for path in associated:
+                path.write_bytes(b"associated")
+            other_version.write_bytes(b"keep another processed version")
+            unrelated.write_bytes(b"keep unrelated")
+
+            store = skip_news_web.JobStore(ROOT / "get_iplayer_skip_news.sh", output_dir)
+            job = next(
+                item
+                for item in store.list_jobs()["history"]
+                if item["filename"] == processed.name
+            )
+
+            store.remove(job["id"])
+
+            self.assertTrue(all(not path.exists() for path in associated))
+            self.assertTrue(other_version.exists())
+            self.assertTrue(unrelated.exists())
+            remaining = {
+                item["filename"] for item in store.list_jobs()["history"]
+            }
+            self.assertEqual(remaining, {other_version.name, unrelated.name})
+
     def test_does_not_remove_an_active_job(self):
         with tempfile.TemporaryDirectory() as output_dir:
             store = skip_news_web.JobStore(ROOT / "get_iplayer_skip_news.sh", output_dir)

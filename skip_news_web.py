@@ -430,6 +430,35 @@ class JobStore:
     def _tracklist_path(output_path):
         return output_path.with_name(output_path.stem + ".tracks.txt")
 
+    def _associated_paths(self, job, output_path=None):
+        paths = set()
+
+        def add_media_and_sidecars(media_path):
+            paths.update(
+                {
+                    media_path,
+                    media_path.with_suffix(".log"),
+                    self._artwork_path(media_path),
+                    self._tracklist_path(media_path),
+                }
+            )
+
+        if output_path is not None:
+            add_media_and_sidecars(output_path)
+
+        pid = job.get("pid")
+        if isinstance(pid, str) and PID_PATTERN.fullmatch(pid):
+            for extension in MEDIA_EXTENSIONS:
+                add_media_and_sidecars(self.output_dir / (pid + extension))
+            paths.update(
+                {
+                    self.output_dir / (pid + ".log"),
+                    self.output_dir / (pid + ".artwork.jpg"),
+                    self.output_dir / (pid + ".tracks.txt"),
+                }
+            )
+        return paths
+
     def _tracks(self, output_path, pid, media_details):
         tracklist_path = self._tracklist_path(output_path)
         if not tracklist_path.is_file():
@@ -610,17 +639,29 @@ class JobStore:
                 raise ActiveJobError("A programme cannot be removed while it is processing.")
             filename = job.get("filename")
 
+        output_path = None
         if filename:
             output_path = (self.output_dir / filename).resolve()
             if output_path.parent != self.output_dir or output_path.name != filename:
                 raise RuntimeError("The stored output filename is invalid.")
-            output_path.unlink(missing_ok=True)
-            output_path.with_suffix(".log").unlink(missing_ok=True)
-            self._artwork_path(output_path).unlink(missing_ok=True)
-            self._tracklist_path(output_path).unlink(missing_ok=True)
+
+        associated_paths = self._associated_paths(job, output_path)
+        for path in associated_paths:
+            if path.parent != self.output_dir:
+                raise RuntimeError("An associated output path is invalid.")
+            path.unlink(missing_ok=True)
 
         with self.lock:
             removed = self.jobs.pop(job_id, None)
+            removed_filenames = {path.name for path in associated_paths}
+            stale_job_ids = [
+                stored_id
+                for stored_id, stored_job in self.jobs.items()
+                if stored_job.get("filename") in removed_filenames
+                and stored_job.get("status") not in {"queued", "running"}
+            ]
+            for stored_id in stale_job_ids:
+                self.jobs.pop(stored_id, None)
             return self._snapshot_job(removed) if removed else None
 
     def _update(self, job_id, **values):

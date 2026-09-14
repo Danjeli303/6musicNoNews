@@ -121,6 +121,9 @@ with artist, show/presenter context, artwork, playback state, and offline seek
 position.
 Completed files persist in the `skipper_downloads` volume. The HLS stream is
 also available at `https://PUBLIC_HOST/hls/radio6music_noNews.m3u8`.
+Removing a processed programme deletes its processed media, logs, artwork, and
+track list, plus any exact PID-named original media and matching sidecars. Other
+processed versions and unrelated files are left in place.
 
 Programme downloads also retain get_iplayer's track list. Skipper records
 absolute input, output, and discarded-sample checkpoints and uses them to move
