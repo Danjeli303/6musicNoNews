@@ -774,6 +774,8 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('id="live-now-playing-title"', html)
         self.assertIn('id="live-now-playing-favourite"', html)
         self.assertIn('id="live-programme-image"', html)
+        self.assertIn('id="site-icon"', html)
+        self.assertIn("updateSiteIcon(currentLiveProgramme?.image_url)", app)
         self.assertIn('id="fip-toggle"', html)
         self.assertIn('role="switch"', html)
         self.assertIn('fetch("/api/fip-toggle"', app)

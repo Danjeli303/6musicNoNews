@@ -47,6 +47,8 @@ const liveProgrammeImageFallback = document.querySelector(
 );
 const fipToggle = document.querySelector("#fip-toggle");
 const fipToggleStatus = document.querySelector("#fip-toggle-status");
+const siteIcon = document.querySelector("#site-icon");
+const defaultSiteIcon = siteIcon?.href;
 
 let pollTimer;
 let displayedJobId;
@@ -194,6 +196,11 @@ function showArtwork(image, fallback, source, alt) {
   image.onerror = () => showArtworkFallback(image, fallback);
   image.alt = alt;
   image.src = source;
+}
+
+function updateSiteIcon(source) {
+  if (!siteIcon) return;
+  siteIcon.href = source || defaultSiteIcon;
 }
 
 function setTrackLink(element, track, fallback) {
@@ -349,6 +356,7 @@ function renderNowPlaying(track, force = false) {
     currentLiveProgramme?.image_url,
     `Artwork for ${currentLiveProgramme?.title || stationName(track)}`,
   );
+  updateSiteIcon(currentLiveProgramme?.image_url);
 
   if (!track.available) {
     nowPlayingHasTrack = false;
