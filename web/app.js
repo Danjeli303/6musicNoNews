@@ -27,6 +27,7 @@ const nowPlayingImageFallback = document.querySelector(
   "#now-playing-image-fallback",
 );
 const nowPlayingFavourite = document.querySelector("#now-playing-favourite");
+const headerRadioToggle = document.querySelector("#header-radio-toggle");
 
 let pollTimer;
 let displayedJobId;
@@ -40,7 +41,32 @@ let nowPlayingHasTrack = false;
 let currentLiveTrack;
 let pendingNowPlayingSignature = "";
 let activeMediaPlayer;
+let showingProgrammeContext = false;
 const historyPlayers = new Map();
+
+function updateHeaderRadioToggle(isPlaying) {
+  if (!headerRadioToggle) return;
+  headerRadioToggle.classList.toggle("is-playing", isPlaying);
+  headerRadioToggle.querySelector("span").textContent = isPlaying ? "■" : "▶";
+  const action = isPlaying ? "Stop" : "Play";
+  headerRadioToggle.title = `${action} live radio`;
+  headerRadioToggle.setAttribute("aria-label", `${action} live radio`);
+}
+
+function alternateHeaderMetadata() {
+  if (!nowPlayingHasTrack || !currentLiveTrack) return;
+  showingProgrammeContext = !showingProgrammeContext;
+  if (showingProgrammeContext) {
+    nowPlayingLabel.textContent = "Live programme";
+    nowPlayingTitle.textContent = currentLiveTrack.programme || "BBC Radio 6 Music";
+    nowPlayingTitle.removeAttribute("href");
+    nowPlayingTitle.removeAttribute("target");
+    nowPlayingTitle.removeAttribute("rel");
+    nowPlayingArtist.textContent = currentLiveTrack.presenter || "News-skipped live stream";
+  } else {
+    renderNowPlaying(currentLiveTrack, true);
+  }
+}
 
 function mediaSessionAvailable() {
   return (
@@ -140,10 +166,11 @@ function nowPlayingTrackSignature(track) {
   ]);
 }
 
-function renderNowPlaying(track) {
+function renderNowPlaying(track, force = false) {
   const signature = nowPlayingTrackSignature(track);
-  if (signature === nowPlayingSignature) return;
+  if (!force && signature === nowPlayingSignature) return;
   nowPlayingSignature = signature;
+  showingProgrammeContext = false;
 
   if (!track.available) {
     nowPlayingHasTrack = false;
@@ -289,6 +316,7 @@ function initialiseRadioPlayer() {
     clearSystemPositionState();
     updateSystemPlaybackState("playing");
     radioStatus.textContent = "Connecting to the live stream…";
+    updateHeaderRadioToggle(true);
   });
   radioPlayer.on("playing", () => {
     updateSystemPlaybackState("playing");
@@ -302,6 +330,7 @@ function initialiseRadioPlayer() {
       updateSystemPlaybackState("paused");
     }
     radioStatus.textContent = "Live stream paused.";
+    updateHeaderRadioToggle(false);
   });
   radioPlayer.on("error", () => {
     if (activeMediaPlayer === radioPlayer) {
@@ -807,6 +836,16 @@ nowPlayingFavourite.addEventListener("click", () => {
   updateFavouriteButton(nowPlayingFavourite, currentLiveTrack);
 });
 
+headerRadioToggle.addEventListener("click", () => {
+  if (!radioPlayer) return;
+  if (radioPlayer.paused()) {
+    const playPromise = radioPlayer.play();
+    if (playPromise?.catch) playPromise.catch(() => updateHeaderRadioToggle(false));
+  } else {
+    radioPlayer.pause();
+  }
+});
+
 window.addEventListener("storage", () => {
   updateFavouriteButton(nowPlayingFavourite, currentLiveTrack);
   historyPlayers.forEach((entry) => {
@@ -825,4 +864,5 @@ initialiseRadioPlayer();
 loadNowPlaying();
 loadJobs();
 setInterval(loadNowPlaying, 5000);
+setInterval(alternateHeaderMetadata, 7000);
 setInterval(loadJobs, 2000);

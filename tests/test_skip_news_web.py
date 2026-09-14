@@ -580,9 +580,12 @@ class DeploymentTests(unittest.TestCase):
         favourites = (ROOT / "web/favourites.js").read_text(encoding="utf-8")
         favourites_page = (ROOT / "web/favourites.html").read_text(encoding="utf-8")
 
-        self.assertIn('href="/favourites.html" target="_blank"', html)
+        self.assertIn('href="#favourites">Favourites</a>', html)
+        self.assertIn('id="favourites"', html)
+        self.assertIn('id="header-radio-toggle"', html)
         self.assertIn('id="now-playing-favourite"', html)
         self.assertIn('src="/favourites.js"', html)
+        self.assertIn('src="/favourites-page.js"', html)
         self.assertIn("skipper.favouriteTracks.v1", favourites)
         self.assertIn("https://www.google.com/search?q=", favourites)
         self.assertIn("programme: clean(track?.programme)", favourites)
