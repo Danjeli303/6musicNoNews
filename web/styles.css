@@ -52,29 +52,6 @@ button, input { font: inherit; }
   gap: 18px;
 }
 
-.sounds-logo {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  color: var(--sounds-light);
-  font-size: clamp(1.2rem, 3vw, 1.75rem);
-  text-decoration: none;
-  letter-spacing: -0.04em;
-}
-
-.sound-bars {
-  height: 28px;
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.sound-bars i { width: 4px; background: var(--sounds); }
-.sound-bars i:nth-child(1) { height: 11px; }
-.sound-bars i:nth-child(2) { height: 25px; }
-.sound-bars i:nth-child(3) { height: 17px; }
-.sound-bars i:nth-child(4) { height: 9px; }
-
 nav { display: flex; align-items: stretch; }
 
 nav a {
@@ -887,7 +864,6 @@ main section { scroll-margin-top: 88px; }
 
 @media (max-width: 620px) {
   .sounds-inner, .content-shell { width: min(100% - 24px, 1240px); }
-  .sounds-logo { padding-left: 4px; }
   .header-artwork { width: 38px; height: 38px; flex-basis: 38px; }
   nav a { white-space: nowrap; padding: 0 11px; font-size: 0.82rem; }
   h1 { font-size: clamp(2.7rem, 14vw, 4.4rem); }
