@@ -1,8 +1,12 @@
 const form = document.querySelector("#programme-form");
 const input = document.querySelector("#sounds-url");
 const programmeSearch = document.querySelector("#programme-search");
-const programmeSelect = document.querySelector("#programme-select");
+const programmeDropdownButton = document.querySelector("#programme-dropdown-button");
+const programmeOptions = document.querySelector("#programme-options");
 const programmeListStatus = document.querySelector("#programme-list-status");
+const selectedTracklist = document.querySelector("#selected-tracklist");
+const selectedTracklistStatus = document.querySelector("#selected-tracklist-status");
+const selectedTrackGrid = document.querySelector("#selected-track-grid");
 const submitButton = document.querySelector("#submit-button");
 const card = document.querySelector("#job-card");
 const kicker = document.querySelector("#job-kicker");
@@ -63,6 +67,10 @@ let activeHeaderEntry;
 let showingProgrammeContext = false;
 const historyPlayers = new Map();
 let availableProgrammes = [];
+let visibleProgrammes = [];
+let activeProgrammeIndex = -1;
+let selectedProgrammeUrl = "";
+let tracklistRequestNumber = 0;
 
 function programmeOptionLabel(programme) {
   const detail = programme.episode && programme.episode !== programme.title
@@ -71,42 +79,137 @@ function programmeOptionLabel(programme) {
   return `${programme.title}${detail}`;
 }
 
-function renderProgrammeOptions() {
-  if (!programmeSelect) return;
+function setProgrammeDropdownOpen(open) {
+  if (!programmeOptions) return;
+  programmeOptions.hidden = !open;
+  programmeSearch.setAttribute("aria-expanded", String(open));
+  programmeDropdownButton.setAttribute("aria-expanded", String(open));
+  programmeDropdownButton.classList.toggle("is-open", open);
+  if (!open) {
+    activeProgrammeIndex = -1;
+    programmeSearch.removeAttribute("aria-activedescendant");
+  }
+}
+
+function setActiveProgramme(index) {
+  if (!visibleProgrammes.length) return;
+  activeProgrammeIndex = Math.max(0, Math.min(index, visibleProgrammes.length - 1));
+  const options = programmeOptions.querySelectorAll("[role=option]");
+  options.forEach((option, optionIndex) => {
+    const active = optionIndex === activeProgrammeIndex;
+    option.classList.toggle("is-active", active);
+    option.setAttribute("aria-selected", String(active));
+  });
+  const activeOption = options[activeProgrammeIndex];
+  if (activeOption) {
+    programmeSearch.setAttribute("aria-activedescendant", activeOption.id);
+    activeOption.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function chooseProgramme(index) {
+  const programme = visibleProgrammes[index];
+  if (!programme) return;
+  programmeSearch.value = programme.title;
+  input.value = programme.url;
+  selectedProgrammeUrl = programme.url;
+  programmeListStatus.textContent = `Selected ${programmeOptionLabel(programme)}.`;
+  setProgrammeDropdownOpen(false);
+  programmeSearch.focus();
+  loadSelectedTracklist(programme);
+}
+
+function clearSelectedTracklist() {
+  tracklistRequestNumber += 1;
+  selectedTracklist.hidden = true;
+  selectedTracklistStatus.textContent = "";
+  selectedTrackGrid.replaceChildren();
+}
+
+function trackTime(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value < 0) return "";
+  const minutes = Math.floor(value / 60);
+  const remainder = Math.floor(value % 60);
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+}
+
+function renderSelectedTracks(tracks) {
+  selectedTrackGrid.replaceChildren(
+    ...tracks.map((track, index) => {
+      const item = makeElement("article", "show-track offline-now-playing");
+      const copy = makeElement("div", "offline-track-copy");
+      const time = trackTime(track.start_seconds);
+      copy.append(makeElement("p", "", time ? `Track ${index + 1} · ${time}` : `Track ${index + 1}`));
+      const title = makeElement("a", "offline-track-title track-search-link", "");
+      setTrackLink(title, track, "Title unavailable");
+      copy.append(title);
+      const detail = [track.artist, track.album].filter(Boolean).join(" · ");
+      copy.append(makeElement("span", "offline-track-artist", detail || "Artist unavailable"));
+      item.append(copy);
+      return item;
+    }),
+  );
+}
+
+async function loadSelectedTracklist(programme) {
+  const requestNumber = ++tracklistRequestNumber;
+  selectedTracklist.hidden = false;
+  selectedTrackGrid.replaceChildren();
+  selectedTracklistStatus.textContent = "Loading music played…";
+  try {
+    const response = await fetch(`/api/programmes/${encodeURIComponent(programme.pid)}/tracks`, {
+      cache: "no-store",
+    });
+    const data = await readResponse(response);
+    if (requestNumber !== tracklistRequestNumber) return;
+    const tracks = Array.isArray(data.tracks) ? data.tracks : [];
+    renderSelectedTracks(tracks);
+    selectedTracklistStatus.textContent = tracks.length
+      ? `${tracks.length} track${tracks.length === 1 ? "" : "s"}.`
+      : "No music tracklist is available for this show.";
+  } catch (error) {
+    if (requestNumber !== tracklistRequestNumber) return;
+    selectedTracklistStatus.textContent = error.message;
+  }
+}
+
+function renderProgrammeOptions(open = false) {
+  if (!programmeOptions) return;
   const query = programmeSearch.value.trim().toLocaleLowerCase();
-  const matches = availableProgrammes.filter((programme) =>
+  visibleProgrammes = availableProgrammes.filter((programme) =>
     programme.title.toLocaleLowerCase().includes(query),
   );
-  const placeholder = document.createElement("option");
-  placeholder.value = "";
-  placeholder.textContent = matches.length
-    ? `Choose from ${matches.length} programme${matches.length === 1 ? "" : "s"}`
-    : "No matching 6 Music programmes";
-  programmeSelect.replaceChildren(
-    placeholder,
-    ...matches.map((programme) => {
-      const option = document.createElement("option");
-      option.value = programme.url;
+  programmeOptions.replaceChildren(
+    ...visibleProgrammes.map((programme, index) => {
+      const option = document.createElement("button");
+      option.type = "button";
+      option.id = `programme-option-${index}`;
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", "false");
+      option.tabIndex = -1;
+      option.dataset.index = String(index);
       option.textContent = programmeOptionLabel(programme);
       return option;
     }),
   );
-  programmeSelect.disabled = matches.length === 0;
+  programmeDropdownButton.disabled = availableProgrammes.length === 0;
   programmeListStatus.textContent = query
-    ? `${matches.length} title${matches.length === 1 ? "" : "s"} matching “${programmeSearch.value.trim()}”.`
-    : "The list is refreshed hourly from a local 6 Music index.";
+    ? `${visibleProgrammes.length} title${visibleProgrammes.length === 1 ? "" : "s"} matching “${programmeSearch.value.trim()}”.`
+    : "";
+  setProgrammeDropdownOpen(open && visibleProgrammes.length > 0);
 }
 
 async function loadProgrammes() {
-  if (!programmeSelect) return;
+  if (!programmeOptions) return;
   try {
     const response = await fetch("/api/programmes", { cache: "no-store" });
     const data = await readResponse(response);
     availableProgrammes = Array.isArray(data.programmes) ? data.programmes : [];
     renderProgrammeOptions();
   } catch (error) {
-    programmeSelect.disabled = true;
-    programmeSelect.firstElementChild.textContent = "Programme list unavailable";
+    programmeDropdownButton.disabled = true;
+    setProgrammeDropdownOpen(false);
     programmeListStatus.textContent = `${error.message} You can still paste a BBC Sounds link.`;
   }
 }
@@ -1000,9 +1103,47 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
-programmeSearch?.addEventListener("input", renderProgrammeOptions);
-programmeSelect?.addEventListener("change", () => {
-  if (programmeSelect.value) input.value = programmeSelect.value;
+programmeSearch?.addEventListener("input", () => {
+  if (input.value === selectedProgrammeUrl) input.value = "";
+  selectedProgrammeUrl = "";
+  clearSelectedTracklist();
+  const query = programmeSearch.value.trim();
+  renderProgrammeOptions(query.length >= 3);
+});
+programmeSearch?.addEventListener("keydown", (event) => {
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    if (programmeOptions.hidden) renderProgrammeOptions(true);
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    const start = activeProgrammeIndex < 0
+      ? (step > 0 ? 0 : visibleProgrammes.length - 1)
+      : activeProgrammeIndex + step;
+    setActiveProgramme(start);
+  } else if (event.key === "Enter" && !programmeOptions.hidden && activeProgrammeIndex >= 0) {
+    event.preventDefault();
+    chooseProgramme(activeProgrammeIndex);
+  } else if (event.key === "Escape") {
+    setProgrammeDropdownOpen(false);
+  }
+});
+programmeDropdownButton?.addEventListener("click", () => {
+  if (programmeOptions.hidden) {
+    renderProgrammeOptions(true);
+    programmeSearch.focus();
+  } else {
+    setProgrammeDropdownOpen(false);
+  }
+});
+programmeOptions?.addEventListener("click", (event) => {
+  const option = event.target.closest("[role=option]");
+  if (option) chooseProgramme(Number(option.dataset.index));
+});
+programmeOptions?.addEventListener("mousemove", (event) => {
+  const option = event.target.closest("[role=option]");
+  if (option) setActiveProgramme(Number(option.dataset.index));
+});
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".programme-combobox")) setProgrammeDropdownOpen(false);
 });
 
 refreshButton.addEventListener("click", loadJobs);

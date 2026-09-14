@@ -111,6 +111,7 @@ Open `https://PUBLIC_HOST/`. The page provides:
 - the news-skipped live stream with BBC track metadata
 - BBC Sounds programme processing with progress
 - searchable BBC Radio 6 Music programme selection from the hourly get_iplayer cache
+- on-selection music tracklists retrieved without downloading programme audio
 - playback, download, and removal of completed programmes
 - current-track details during live and processed playback
 - a browser-local favourites list, with Google searches from every track title
@@ -134,6 +135,11 @@ processed media file for offline track details. Offline favourites also retain
 the show and presenter from embedded M4A metadata, falling back to the track-list
 header. Favourites use a Last.fm-compatible track shape in browser storage; no
 Last.fm account or API key is required yet.
+
+Programme discovery uses `get_iplayer --tracklist-only`. Raw tracklists are
+cached by PID under `downloads/.cache/tracklists`, so selecting the same show
+again does not repeat the lookup. First-time lookups use an isolated temporary
+working directory and do not download programme audio.
 
 Set `BBC_NOW_PLAYING_URL` to override the BBC metadata endpoint or
 `BBC_NOW_PLAYING_DELAY_SECONDS` to adjust the default 18-second display delay.

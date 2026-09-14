@@ -25,7 +25,7 @@ body {
 }
 
 a { color: inherit; }
-button, input, select { font: inherit; }
+button, input { font: inherit; }
 
 .sounds-inner,
 .content-shell {
@@ -105,23 +105,67 @@ input {
 input:focus { border-color: var(--sounds-light); box-shadow: inset 0 0 0 2px #111; }
 input::placeholder { color: #646464; }
 
-#programme-search,
-#programme-select {
+.programme-combobox {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 50px;
+}
+
+#programme-search {
   width: 100%;
   min-width: 0;
   padding: 14px 16px;
   border: 2px solid #fff;
+  border-right: 0;
   border-radius: 0;
   color: #111;
   background: #fff;
   outline: 0;
 }
 
-#programme-search:focus,
-#programme-select:focus { border-color: var(--sounds-light); box-shadow: inset 0 0 0 2px #111; }
-.programme-select-label { margin-top: 14px; }
+#programme-search:focus { border-color: var(--sounds-light); box-shadow: inset 0 0 0 2px #111; }
+.programme-dropdown-button {
+  min-height: 0;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+  border: 2px solid #fff;
+  color: #111;
+  background: #fff;
+}
+.programme-dropdown-button span:last-child { font-size: 1.25rem; line-height: 1; transition: transform 150ms ease; }
+.programme-dropdown-button:hover,
+.programme-dropdown-button:focus { color: #fff; background: #292929; }
+.programme-dropdown-button.is-open span { transform: rotate(180deg); }
+.programme-options {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  z-index: 20;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 2px solid var(--sounds-light);
+  background: #fff;
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.5);
+}
+.programme-options[hidden] { display: none; }
+.programme-options [role="option"] {
+  width: 100%;
+  min-height: 0;
+  display: block;
+  padding: 11px 14px;
+  border-bottom: 1px solid #ddd;
+  color: #111;
+  background: #fff;
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: left;
+}
+.programme-options [role="option"]:last-child { border-bottom: 0; }
+.programme-options [role="option"]:hover,
+.programme-options [role="option"].is-active { color: #fff; background: #292929; }
 .programme-list-status { min-height: 1.2em; margin: 8px 0 18px; color: #ddd; font-size: 0.74rem; }
-#programme-select:disabled { color: #666; cursor: wait; }
 
 button,
 .download-button {
@@ -171,6 +215,22 @@ button:disabled { cursor: wait; opacity: 0.65; }
   color: #ddd;
   line-height: 1.45;
 }
+
+.selected-tracklist {
+  grid-column: 1 / -1;
+  padding-top: 28px;
+  border-top: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.selected-tracklist h3 {
+  margin: 0;
+  font-size: clamp(1.35rem, 3vw, 2rem);
+  letter-spacing: -0.025em;
+}
+
+.selected-tracklist-status { min-height: 1.2em; margin: 8px 0 18px; color: #ddd; font-size: 0.78rem; }
+.music-played-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.music-played-grid .offline-now-playing { margin: 0; }
 
 .job-card {
   margin-bottom: 52px;

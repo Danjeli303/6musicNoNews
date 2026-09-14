@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -665,6 +666,76 @@ def parse_get_iplayer_tracklist(text, pid=None, programme=None, presenter=None):
             }
         )
     return tracks
+
+
+class BBCTracklistService:
+    """Fetch tracklists without audio and retain raw results in a PID cache."""
+
+    def __init__(self, cache_dir, profile_dir, executable="get_iplayer"):
+        self.cache_dir = Path(cache_dir).resolve()
+        self.profile_dir = Path(profile_dir).resolve()
+        self.executable = executable
+        self.lock = threading.Lock()
+
+    def _cache_path(self, pid):
+        return self.cache_dir / f"{pid}.tracks.txt"
+
+    def _fetch_tracklist(self, pid):
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.profile_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix=f"{pid}-", dir=str(self.cache_dir)
+        ) as temporary_dir:
+            result = subprocess.run(
+                [
+                    self.executable,
+                    f"--pid={pid}",
+                    "--type=radio",
+                    "--force",
+                    "--tracklist-only",
+                    f"--profile-dir={self.profile_dir}",
+                    f"--output={temporary_dir}",
+                    f"--file-prefix={pid}",
+                ],
+                cwd=str(BASE_DIR),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+                check=False,
+            )
+            if result.returncode != 0:
+                raise RuntimeError("get_iplayer could not retrieve this tracklist.")
+            tracklist_path = Path(temporary_dir) / f"{pid}.tracks.txt"
+            if not tracklist_path.is_file():
+                return ""
+            return tracklist_path.read_text(encoding="utf-8", errors="replace")
+
+    def get(self, pid, programme=None, presenter=None):
+        if not PID_PATTERN.fullmatch(pid or ""):
+            raise ValueError("Invalid programme PID.")
+        with self.lock:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_path = self._cache_path(pid)
+            cached = cache_path.is_file()
+            if cached:
+                text = cache_path.read_text(encoding="utf-8", errors="replace")
+            else:
+                text = self._fetch_tracklist(pid)
+                temporary_path = cache_path.with_suffix(".tmp")
+                temporary_path.write_text(text, encoding="utf-8")
+                temporary_path.replace(cache_path)
+            return {
+                "pid": pid,
+                "cached": cached,
+                "tracks": parse_get_iplayer_tracklist(
+                    text,
+                    pid=pid,
+                    programme=programme,
+                    presenter=presenter,
+                ),
+            }
 
 
 def _timeline_checkpoints(log_text):
@@ -1347,6 +1418,33 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
                 )
                 return
             self._send_json(HTTPStatus.OK, payload)
+        elif re.fullmatch(r"/api/programmes/[a-z0-9]{8}/tracks", path):
+            pid = path.split("/")[3]
+            try:
+                programmes = self.server.schedule_service.list_programmes()[
+                    "programmes"
+                ]
+                programme = next(
+                    (item for item in programmes if item["pid"] == pid), None
+                )
+                if programme is None:
+                    self._send_json(
+                        HTTPStatus.NOT_FOUND,
+                        {"error": "This is not an available BBC Radio 6 Music programme."},
+                    )
+                    return
+                payload = self.server.tracklist_service.get(
+                    pid,
+                    programme=programme["title"],
+                    presenter=programme["episode"],
+                )
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                self._send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": "The music played in this show is temporarily unavailable."},
+                )
+                return
+            self._send_json(HTTPStatus.OK, payload)
         elif path == "/api/now-playing":
             try:
                 payload = self.server.now_playing_service.get()
@@ -1474,6 +1572,11 @@ class SkipNewsServer(ThreadingHTTPServer):
         )
         self.schedule_service = BBCScheduleService(
             job_store.output_dir / ".get_iplayer_schedule",
+            executable=os.environ.get("GET_IPLAYER", "get_iplayer"),
+        )
+        self.tracklist_service = BBCTracklistService(
+            job_store.output_dir / ".cache" / "tracklists",
+            job_store.output_dir / ".cache" / "get_iplayer_tracklists",
             executable=os.environ.get("GET_IPLAYER", "get_iplayer"),
         )
         self.now_playing_delay_seconds = now_playing_delay_seconds(

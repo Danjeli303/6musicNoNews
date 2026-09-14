@@ -175,6 +175,56 @@ timeline: input_samples=250 output_samples=200 discarded_samples=50
             track["duration_seconds"],
         )
 
+    def test_tracklist_only_fetch_is_cached_by_pid(self):
+        with tempfile.TemporaryDirectory() as temp_root:
+            root = Path(temp_root)
+            executable = root / "get_iplayer"
+            calls = root / "calls"
+            executable.write_text(
+                """#!/bin/sh
+set -eu
+output=
+prefix=
+tracklist_only=0
+for argument in "$@"; do
+    case "$argument" in
+        --output=*) output=${argument#--output=} ;;
+        --file-prefix=*) prefix=${argument#--file-prefix=} ;;
+        --tracklist-only) tracklist_only=1 ;;
+    esac
+done
+[ "$tracklist_only" -eq 1 ]
+printf 'called\n' >> "CALLS_FILE"
+cat > "$output/$prefix.tracks.txt" <<'TRACKS'
+Example Show
+Example episode
+2026-09-14
+https://www.bbc.co.uk/sounds/play/m0030yw7
+Music
+--------
+00:00:16
+Example Artist
+Example Track
+Duration: 00:00:02
+--------
+TRACKS
+""".replace("CALLS_FILE", str(calls)),
+                encoding="utf-8",
+            )
+            executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+            service = skip_news_web.BBCTracklistService(
+                root / "cache", root / "profile", executable=executable
+            )
+
+            first = service.get("m0030yw7")
+            second = service.get("m0030yw7")
+
+            self.assertFalse(first["cached"])
+            self.assertTrue(second["cached"])
+            self.assertEqual(first["tracks"][0]["title"], "Example Track")
+            self.assertEqual(calls.read_text(encoding="utf-8"), "called\n")
+            self.assertTrue((root / "cache/m0030yw7.tracks.txt").is_file())
+
 
 class FavouriteStoreTests(unittest.TestCase):
     def test_persists_lastfm_shaped_favourites_between_instances(self):
@@ -665,9 +715,15 @@ class DeploymentTests(unittest.TestCase):
         self.assertNotIn("Your programme.", html)
         self.assertNotIn("Without the news.", html)
         self.assertIn('id="programme-search"', html)
-        self.assertIn('id="programme-select"', html)
+        self.assertIn('role="combobox"', html)
+        self.assertIn('id="programme-dropdown-button"', html)
+        self.assertIn('id="programme-options"', html)
         self.assertIn('fetch("/api/programmes"', app)
         self.assertIn("programme.title.toLocaleLowerCase().includes(query)", app)
+        self.assertIn("renderProgrammeOptions(query.length >= 3)", app)
+        self.assertIn('id="selected-tracklist"', html)
+        self.assertIn("Music played in this show:", html)
+        self.assertIn("/tracks`,", app)
 
     def test_caddy_routes_hls_and_web_on_the_same_host(self):
         caddyfile = (ROOT / "docker/caddy/Caddyfile").read_text(encoding="utf-8")
