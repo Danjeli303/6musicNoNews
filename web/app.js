@@ -162,7 +162,7 @@ function renderNowPlaying(track) {
     ? "Now playing"
     : "Recently played";
   nowPlayingTitle.textContent = track.title || "Title unavailable";
-  nowPlayingTitle.href = window.SkipperFavourites.lastFmSearchUrl(track);
+  nowPlayingTitle.href = window.SkipperFavourites.webSearchUrl(track);
   nowPlayingTitle.target = "_blank";
   nowPlayingTitle.rel = "noopener";
   nowPlayingArtist.textContent = track.artist || "BBC Radio 6 Music";
@@ -557,7 +557,7 @@ function initialiseHistoryPlayers(history) {
       const trackTitle = entry.trackInfo.querySelector(".offline-track-title");
       const trackArtist = entry.trackInfo.querySelector(".offline-track-artist");
       trackTitle.textContent = track.title || "Title unavailable";
-      trackTitle.href = window.SkipperFavourites.lastFmSearchUrl(track);
+      trackTitle.href = window.SkipperFavourites.webSearchUrl(track);
       trackTitle.target = "_blank";
       trackTitle.rel = "noopener";
       trackArtist.textContent = track.artist || "Artist unavailable";

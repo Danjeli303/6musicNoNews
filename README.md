@@ -112,7 +112,7 @@ Open `https://PUBLIC_HOST/`. The page provides:
 - BBC Sounds programme processing with progress
 - playback, download, and removal of completed programmes
 - current-track details during live and processed playback
-- a browser-local favourites list, with Last.fm searches from every track title
+- a browser-local favourites list, with Google searches from every track title
 
 Playback does not start automatically and only one player can play at a time.
 On browsers that support Media Session, including current iPhone Safari, the

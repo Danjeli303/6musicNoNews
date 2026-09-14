@@ -13,10 +13,10 @@
     return `${artist}\u0000${name}`;
   }
 
-  function lastFmSearchUrl(track) {
+  function webSearchUrl(track) {
     const artist = clean(track?.artist?.name || track?.artist);
     const name = clean(track?.name || track?.title);
-    return `https://www.last.fm/search?q=${encodeURIComponent(`${artist} ${name}`.trim())}`;
+    return `https://www.google.com/search?q=${encodeURIComponent(`${artist} ${name}`.trim())}`;
   }
 
   function normalize(track) {
@@ -36,7 +36,7 @@
     return {
       name,
       mbid: clean(track?.mbid),
-      url: lastFmSearchUrl({ artist, name }),
+      url: webSearchUrl({ artist, name }),
       artist: {
         name: artist,
         mbid: clean(track?.artist?.mbid),
@@ -101,7 +101,7 @@
   window.SkipperFavourites = {
     STORAGE_KEY,
     has,
-    lastFmSearchUrl,
+    webSearchUrl,
     normalize,
     read,
     toggle,

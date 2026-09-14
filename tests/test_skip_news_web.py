@@ -584,7 +584,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('id="now-playing-favourite"', html)
         self.assertIn('src="/favourites.js"', html)
         self.assertIn("skipper.favouriteTracks.v1", favourites)
-        self.assertIn("https://www.last.fm/search?q=", favourites)
+        self.assertIn("https://www.google.com/search?q=", favourites)
         self.assertIn("programme: clean(track?.programme)", favourites)
         self.assertIn("presenter: clean(track?.presenter)", favourites)
         self.assertIn('id="favourites-list"', favourites_page)

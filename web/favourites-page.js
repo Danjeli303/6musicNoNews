@@ -27,7 +27,7 @@ function renderFavourites() {
       const copy = document.createElement("div");
       copy.className = "favourite-copy";
       const title = document.createElement("a");
-      title.href = track.url || window.SkipperFavourites.lastFmSearchUrl(track);
+      title.href = window.SkipperFavourites.webSearchUrl(track);
       title.target = "_blank";
       title.rel = "noopener";
       title.textContent = track.name || "Unknown track";
