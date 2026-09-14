@@ -237,7 +237,7 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 
 .live-player-panel {
   display: grid;
-  grid-template-columns: 128px minmax(0, 1fr);
+  grid-template-columns: 190px minmax(0, 1fr);
   align-items: stretch;
   min-width: 0;
   background: #111;
@@ -245,6 +245,8 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 }
 
 .station-mark {
+  width: 190px;
+  height: 190px;
   min-height: 190px;
   display: grid;
   align-content: center;
@@ -258,9 +260,8 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 .station-mark > img {
   width: 100%;
   height: 100%;
-  min-height: 190px;
   display: block;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .station-mark > span {
@@ -887,9 +888,9 @@ main section { scroll-margin-top: 88px; }
   .job-heading { align-items: flex-start; }
   .live-section, .process-section { padding: 24px; }
   .live-player-panel { grid-template-columns: 1fr; }
-  .station-mark { min-height: 115px; border-right: 0; border-bottom: 1px solid #4c2b25; }
+  .station-mark { width: 100%; height: 180px; min-height: 115px; border-right: 0; border-bottom: 1px solid #4c2b25; }
   .station-mark strong { font-size: 3.5rem; }
-  .station-mark > img { min-height: 115px; max-height: 180px; }
+  .station-mark > img { object-fit: cover; }
   .player-area { padding: 20px; }
   .activity-heading { align-items: flex-start; flex-direction: column; }
   .favourites-heading { align-items: flex-start; flex-direction: column; }

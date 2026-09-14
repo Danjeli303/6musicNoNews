@@ -78,7 +78,6 @@ function alternateHeaderMetadata() {
   if (!currentLiveTrack && !currentLiveProgramme?.available) return;
   showingProgrammeContext = !showingProgrammeContext;
   if (showingProgrammeContext) {
-    renderLiveProgramme(currentLiveProgramme);
     renderHeaderProgramme(currentLiveProgramme);
   } else if (currentLiveTrack) {
     renderNowPlaying(currentLiveTrack, true);
@@ -225,19 +224,6 @@ function liveProgrammeStatus() {
     : currentLiveProgramme.title;
 }
 
-function renderLiveProgramme(programme) {
-  liveNowPlayingLabel.textContent = "Live programme";
-  setProgrammeLink(liveNowPlayingTitle, programme, "BBC Radio 6 Music");
-  liveNowPlayingArtist.textContent = programmeDescription(programme);
-  showArtwork(
-    liveNowPlayingImage,
-    liveNowPlayingImageFallback,
-    programme?.image_url,
-    `Artwork for ${programme?.title || "BBC Radio 6 Music"}`,
-  );
-  updateFavouriteButton(liveNowPlayingFavourite, undefined);
-}
-
 function renderHeaderProgramme(programme) {
   showingProgrammeContext = true;
   nowPlayingLabel.textContent = "Live programme";
@@ -325,14 +311,13 @@ function renderNowPlaying(track, force = false) {
   if (!track.available) {
     nowPlayingHasTrack = false;
     currentLiveTrack = undefined;
+    renderLiveNowPlaying(track);
     if (currentLiveProgramme) {
-      renderLiveProgramme(currentLiveProgramme);
       if (!(activeHeaderEntry && activeMediaPlayer === activeHeaderEntry.player)) {
         renderHeaderProgramme(currentLiveProgramme);
       }
       return;
     }
-    renderLiveNowPlaying(track);
     if (activeHeaderEntry && activeMediaPlayer === activeHeaderEntry.player) return;
     nowPlayingLabel.textContent = "Now playing";
     nowPlayingTitle.textContent = "Track information unavailable";

@@ -654,7 +654,10 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn("activeMediaPlayer === radioPlayer", app)
         self.assertIn("renderHeaderHistory(entry", app)
         self.assertIn("renderHeaderProgramme(currentLiveProgramme)", app)
+        self.assertNotIn("renderLiveProgramme(currentLiveProgramme)", app)
         self.assertIn("radioStatus.textContent = liveProgrammeStatus()", app)
+        self.assertIn("grid-template-columns: 190px minmax(0, 1fr)", styles)
+        self.assertIn("object-fit: contain", styles)
         self.assertIn(
             ".history-player-wrap .video-js.vjs-layout-tiny .vjs-progress-control",
             styles,
