@@ -38,6 +38,10 @@ const liveNowPlayingImageFallback = document.querySelector(
 const liveNowPlayingFavourite = document.querySelector(
   "#live-now-playing-favourite",
 );
+const liveProgrammeImage = document.querySelector("#live-programme-image");
+const liveProgrammeImageFallback = document.querySelector(
+  "#live-programme-image-fallback",
+);
 
 let pollTimer;
 let displayedJobId;
@@ -49,6 +53,7 @@ let nowPlayingRequestInFlight = false;
 let nowPlayingQueueTimer;
 let nowPlayingHasTrack = false;
 let currentLiveTrack;
+let currentLiveProgramme;
 let pendingNowPlayingSignature = "";
 let activeMediaPlayer;
 let activeHeaderEntry;
@@ -70,16 +75,11 @@ function alternateHeaderMetadata() {
     renderHeaderHistory(activeHeaderEntry, showingProgrammeContext);
     return;
   }
-  if (!nowPlayingHasTrack || !currentLiveTrack) return;
+  if (!currentLiveTrack && !currentLiveProgramme?.available) return;
   showingProgrammeContext = !showingProgrammeContext;
   if (showingProgrammeContext) {
-    nowPlayingLabel.textContent = "Live programme";
-    nowPlayingTitle.textContent = currentLiveTrack.programme || "BBC Radio 6 Music";
-    nowPlayingTitle.removeAttribute("href");
-    nowPlayingTitle.removeAttribute("target");
-    nowPlayingTitle.removeAttribute("rel");
-    nowPlayingArtist.textContent = currentLiveTrack.presenter || "News-skipped live stream";
-  } else {
+    renderHeaderProgramme(currentLiveProgramme);
+  } else if (currentLiveTrack) {
     renderNowPlaying(currentLiveTrack, true);
   }
 }
@@ -199,6 +199,45 @@ function setTrackLink(element, track, fallback) {
   }
 }
 
+function setProgrammeLink(element, programme, fallback) {
+  element.textContent = programme?.title || fallback;
+  if (programme?.url) {
+    element.href = programme.url;
+    element.target = "_blank";
+    element.rel = "noopener";
+  } else {
+    element.removeAttribute("href");
+    element.removeAttribute("target");
+    element.removeAttribute("rel");
+  }
+}
+
+function programmeDescription(programme) {
+  return programme?.subtitle || programme?.presenter || "BBC Radio 6 Music";
+}
+
+function liveProgrammeStatus() {
+  if (!currentLiveProgramme?.available) return "Playing BBC Radio 6 Music live.";
+  const detail = programmeDescription(currentLiveProgramme);
+  return detail && detail !== currentLiveProgramme.title
+    ? `${currentLiveProgramme.title} · ${detail}`
+    : currentLiveProgramme.title;
+}
+
+function renderHeaderProgramme(programme) {
+  showingProgrammeContext = true;
+  nowPlayingLabel.textContent = "Live programme";
+  setProgrammeLink(nowPlayingTitle, programme, "BBC Radio 6 Music");
+  nowPlayingArtist.textContent = programmeDescription(programme);
+  showArtwork(
+    nowPlayingImage,
+    nowPlayingImageFallback,
+    programme?.image_url,
+    `Artwork for ${programme?.title || "BBC Radio 6 Music"}`,
+  );
+  updateFavouriteButton(nowPlayingFavourite, undefined);
+}
+
 function renderLiveNowPlaying(track) {
   if (!track.available) {
     liveNowPlayingLabel.textContent = "Now playing";
@@ -249,6 +288,10 @@ function nowPlayingTrackSignature(track) {
     track.artist,
     track.title,
     track.image_url,
+    track.programme,
+    track.programme_pid,
+    track.programme_image_url,
+    track.show?.subtitle,
   ]);
 }
 
@@ -257,11 +300,24 @@ function renderNowPlaying(track, force = false) {
   if (!force && signature === nowPlayingSignature) return;
   nowPlayingSignature = signature;
   showingProgrammeContext = false;
-  renderLiveNowPlaying(track);
+  currentLiveProgramme = track.show?.available ? track.show : undefined;
+  showArtwork(
+    liveProgrammeImage,
+    liveProgrammeImageFallback,
+    currentLiveProgramme?.image_url,
+    `Artwork for ${currentLiveProgramme?.title || "BBC Radio 6 Music"}`,
+  );
 
   if (!track.available) {
     nowPlayingHasTrack = false;
     currentLiveTrack = undefined;
+    renderLiveNowPlaying(track);
+    if (currentLiveProgramme) {
+      if (!(activeHeaderEntry && activeMediaPlayer === activeHeaderEntry.player)) {
+        renderHeaderProgramme(currentLiveProgramme);
+      }
+      return;
+    }
     if (activeHeaderEntry && activeMediaPlayer === activeHeaderEntry.player) return;
     nowPlayingLabel.textContent = "Now playing";
     nowPlayingTitle.textContent = "Track information unavailable";
@@ -273,6 +329,7 @@ function renderNowPlaying(track, force = false) {
 
   nowPlayingHasTrack = true;
   currentLiveTrack = track;
+  renderLiveNowPlaying(track);
   if (activeHeaderEntry && activeMediaPlayer === activeHeaderEntry.player) return;
   nowPlayingLabel.textContent = track.now_playing
     ? "Now playing"
@@ -288,6 +345,9 @@ function renderNowPlaying(track, force = false) {
   updateFavouriteButton(nowPlayingFavourite, track);
   if (activeMediaPlayer === radioPlayer) {
     updateSystemMediaMetadata(track);
+  }
+  if (activeMediaPlayer === radioPlayer && !radioPlayer.paused()) {
+    radioStatus.textContent = liveProgrammeStatus();
   }
 }
 
@@ -403,7 +463,7 @@ function initialiseRadioPlayer() {
   });
   radioPlayer.on("playing", () => {
     updateSystemPlaybackState("playing");
-    radioStatus.textContent = "Playing live · News-skipped stream";
+    radioStatus.textContent = liveProgrammeStatus();
   });
   radioPlayer.on("waiting", () => {
     radioStatus.textContent = "Reconnecting to the live stream…";
@@ -967,6 +1027,7 @@ window.addEventListener("skipper:favourites-changed", () => {
 });
 
 initialiseRadioPlayer();
+window.SkipperFavourites.load();
 loadNowPlaying();
 loadJobs();
 setInterval(loadNowPlaying, 5000);

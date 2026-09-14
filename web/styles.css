@@ -237,7 +237,7 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 
 .live-player-panel {
   display: grid;
-  grid-template-columns: 128px minmax(0, 1fr);
+  grid-template-columns: 190px minmax(0, 1fr);
   align-items: stretch;
   min-width: 0;
   background: #111;
@@ -245,6 +245,8 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 }
 
 .station-mark {
+  width: 190px;
+  height: 190px;
   min-height: 190px;
   display: grid;
   align-content: center;
@@ -252,9 +254,22 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
   color: #fff;
   background: #2a0600;
   border-right: 1px solid #4c2b25;
+  overflow: hidden;
 }
 
-.station-mark span {
+.station-mark > img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
+.station-mark > span {
+  display: grid;
+  justify-items: center;
+}
+
+.station-mark strong {
   font-size: 4.8rem;
   font-weight: 800;
   line-height: 0.82;
@@ -854,11 +869,10 @@ main section { scroll-margin-top: 88px; }
 .library-message { min-height: 1.3em; margin: 18px 0 0; color: #bbb; font-size: 0.82rem; }
 
 @media (max-width: 820px) {
-  .sounds-inner { gap: 12px; }
-  .header-now-playing { flex: 0 0 auto; }
-  .header-track-copy { display: none; }
-  nav { min-width: 0; flex: 1 1 auto; overflow-x: auto; }
-  nav a { padding: 0 14px; white-space: nowrap; }
+  .sounds-inner { height: auto; min-height: 72px; flex-wrap: wrap; gap: 0; padding-top: 10px; }
+  .header-now-playing { max-width: none; flex: 1 1 100%; gap: 8px; }
+  nav { width: 100%; min-width: 0; flex: 1 1 100%; overflow-x: auto; }
+  nav a { height: 50px; padding: 0 14px; white-space: nowrap; }
   .live-section, .process-section { grid-template-columns: 1fr; }
 }
 
@@ -874,8 +888,9 @@ main section { scroll-margin-top: 88px; }
   .job-heading { align-items: flex-start; }
   .live-section, .process-section { padding: 24px; }
   .live-player-panel { grid-template-columns: 1fr; }
-  .station-mark { min-height: 115px; border-right: 0; border-bottom: 1px solid #4c2b25; }
-  .station-mark span { font-size: 3.5rem; }
+  .station-mark { width: 100%; height: 180px; min-height: 115px; border-right: 0; border-bottom: 1px solid #4c2b25; }
+  .station-mark strong { font-size: 3.5rem; }
+  .station-mark > img { object-fit: cover; }
   .player-area { padding: 20px; }
   .activity-heading { align-items: flex-start; flex-direction: column; }
   .favourites-heading { align-items: flex-start; flex-direction: column; }

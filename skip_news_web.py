@@ -62,8 +62,10 @@ BBC_NOW_PLAYING_URL = (
     "https://rms.api.bbc.co.uk/v2/services/bbc_6music/segments/latest"
     "?experience=domestic&offset=0&limit=4"
 )
+BBC_6MUSIC_SCHEDULE_URL = "https://www.bbc.co.uk/sounds/schedules/bbc_6music"
 BBC_IMAGE_HOST = "ichef.bbci.co.uk"
 DEFAULT_NOW_PLAYING_DELAY_SECONDS = 18
+DEFAULT_SCHEDULE_CACHE_SECONDS = 3600
 MAX_ACTIVE_JOBS = 5
 NOW_PLAYING_FETCH_ERRORS = (OSError, HTTPException, UnicodeError, ValueError)
 
@@ -86,7 +88,9 @@ def _bbc_image_url(value):
     parsed = urlsplit(value)
     if parsed.scheme != "https" or parsed.hostname != BBC_IMAGE_HOST:
         return None
-    return value.replace("{recipe}", "640x640")
+    return value.replace("{recipe}", "640x640").replace(
+        "/images/ic/192xn/", "/images/ic/640x640/"
+    )
 
 
 def bbc_now_playing_from_payload(payload):
@@ -168,6 +172,271 @@ class BBCNowPlayingService:
             self.cached = result
             self.cached_at = now
             return dict(result)
+
+
+class FavouriteStore:
+    """Persist Last.fm-shaped favourite tracks for every client of this server."""
+
+    def __init__(self, path):
+        self.path = Path(path).resolve()
+        self.lock = threading.Lock()
+        self.tracks = self._load()
+
+    @staticmethod
+    def _track_key(track):
+        artist = _clean_text((track.get("artist") or {}).get("name")) or ""
+        name = _clean_text(track.get("name")) or ""
+        return (artist.casefold(), name.casefold())
+
+    @staticmethod
+    def _normalize(track):
+        if not isinstance(track, dict):
+            raise ValueError("Invalid favourite track.")
+        artist_value = track.get("artist")
+        artist = artist_value if isinstance(artist_value, dict) else {}
+        album_value = track.get("album")
+        album = album_value if isinstance(album_value, dict) else {}
+        images = track.get("image") if isinstance(track.get("image"), list) else []
+        image_url = next(
+            (
+                _bbc_image_url(image.get("#text"))
+                for image in images
+                if isinstance(image, dict) and image.get("#text")
+            ),
+            None,
+        )
+        name = _clean_text(track.get("name"))
+        artist_name = _clean_text(artist.get("name"))
+        if not name and not artist_name:
+            raise ValueError("A favourite needs a track title or artist.")
+        try:
+            saved_at = int((track.get("date") or {}).get("uts"))
+        except (AttributeError, TypeError, ValueError):
+            saved_at = int(time.time())
+        saved_at = max(1, min(saved_at, int(time.time()) + 300))
+        normalized = {
+            "name": name or "",
+            "mbid": _clean_text(track.get("mbid")) or "",
+            "url": _clean_text(track.get("url"), limit=1000) or "",
+            "artist": {
+                "name": artist_name or "",
+                "mbid": _clean_text(artist.get("mbid")) or "",
+                "url": _clean_text(artist.get("url"), limit=1000) or "",
+            },
+            "album": {
+                "title": _clean_text(album.get("title")) or "",
+                "mbid": _clean_text(album.get("mbid")) or "",
+            },
+            "image": [],
+            "date": {
+                "uts": str(saved_at),
+                "#text": datetime.fromtimestamp(saved_at, timezone.utc).isoformat(),
+            },
+            "source": _clean_text(track.get("source")) or "BBC Radio 6 Music",
+            "programme_pid": _clean_text(track.get("programme_pid")) or "",
+            "programme": _clean_text(track.get("programme")) or "",
+            "presenter": _clean_text(track.get("presenter")) or "",
+        }
+        if image_url:
+            normalized["image"] = [
+                {"size": "small", "#text": image_url},
+                {"size": "large", "#text": image_url},
+            ]
+        return normalized
+
+    def _load(self):
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+            tracks = value.get("tracks", []) if isinstance(value, dict) else value
+            if not isinstance(tracks, list):
+                return []
+            return [self._normalize(track) for track in tracks[:2000]]
+        except (OSError, ValueError, json.JSONDecodeError):
+            return []
+
+    def _save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps({"tracks": self.tracks}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(self.path)
+
+    def list(self):
+        with self.lock:
+            return {"tracks": [dict(track) for track in self.tracks]}
+
+    def add(self, track):
+        normalized = self._normalize(track)
+        key = self._track_key(normalized)
+        with self.lock:
+            self.tracks = [item for item in self.tracks if self._track_key(item) != key]
+            self.tracks.insert(0, normalized)
+            self.tracks = self.tracks[:2000]
+            self._save()
+        return normalized
+
+    def remove(self, track):
+        normalized = self._normalize(track)
+        key = self._track_key(normalized)
+        with self.lock:
+            original_length = len(self.tracks)
+            self.tracks = [item for item in self.tracks if self._track_key(item) != key]
+            removed = len(self.tracks) != original_length
+            if removed:
+                self._save()
+        return removed
+
+
+def get_iplayer_schedule_from_output(output):
+    """Parse machine-delimited BBC 6 Music schedule rows from get_iplayer."""
+    programmes = []
+    for line in output.splitlines():
+        if not line.startswith("SKIPPER|||"):
+            continue
+        parts = line.split("|||", 7)
+        if len(parts) != 8:
+            continue
+        _, pid, title, subtitle, available, duration, image_url, web_url = parts
+        try:
+            available_at = datetime.fromisoformat(available).astimezone(timezone.utc)
+            duration_seconds = int(duration)
+        except (TypeError, ValueError):
+            continue
+        if not PID_PATTERN.fullmatch(pid) or duration_seconds < 1:
+            continue
+        end = available_at.timestamp()
+        start = end - duration_seconds
+        programmes.append(
+            {
+                "available": True,
+                "pid": pid,
+                "title": _clean_text(title) or "BBC Radio 6 Music",
+                "subtitle": _clean_text(subtitle) or "",
+                "presenter": _clean_text(title) or "BBC Radio 6 Music",
+                "image_url": _bbc_image_url(image_url),
+                "start_time": datetime.fromtimestamp(start, timezone.utc).isoformat(),
+                "end_time": datetime.fromtimestamp(end, timezone.utc).isoformat(),
+                "start_timestamp": start,
+                "end_timestamp": end,
+                "url": _clean_text(web_url, limit=1000) or "",
+                "schedule_url": BBC_6MUSIC_SCHEDULE_URL,
+            }
+        )
+    return programmes
+
+
+def current_schedule_programme(programmes, at=None):
+    """Select the schedule entry which contains the supplied UTC instant."""
+    timestamp = (at or datetime.now(timezone.utc)).timestamp()
+    current = next(
+        (
+            programme
+            for programme in programmes
+            if programme["start_timestamp"] <= timestamp < programme["end_timestamp"]
+        ),
+        None,
+    )
+    inferred = False
+    if current is None:
+        previous = [
+            programme
+            for programme in programmes
+            if programme["start_timestamp"] <= timestamp
+        ]
+        candidate = max(previous, key=lambda item: item["start_timestamp"], default=None)
+        if candidate and timestamp - candidate["end_timestamp"] <= 3600:
+            current = candidate
+            inferred = True
+    if current is None:
+        return {"available": False, "schedule_url": BBC_6MUSIC_SCHEDULE_URL}
+    result = {
+        key: value
+        for key, value in current.items()
+        if key not in {"start_timestamp", "end_timestamp"}
+    }
+    result["schedule_inferred"] = inferred
+    return result
+
+
+class BBCScheduleService:
+    """Refresh and cache the BBC Radio 6 Music schedule using get_iplayer."""
+
+    LIST_FORMAT = (
+        "SKIPPER|||<pid>|||<name>|||<episode>|||<available>|||"
+        "<duration>|||<thumbnail>|||<web>"
+    )
+
+    def __init__(
+        self,
+        profile_dir,
+        executable="get_iplayer",
+        cache_seconds=DEFAULT_SCHEDULE_CACHE_SECONDS,
+    ):
+        self.profile_dir = Path(profile_dir).resolve()
+        self.executable = executable
+        self.cache_seconds = cache_seconds
+        self.lock = threading.Lock()
+        self.programmes = []
+        self.cached_at = 0.0
+
+    def _run(self, arguments, timeout):
+        result = subprocess.run(
+            [self.executable, f"--profile-dir={self.profile_dir}", *arguments],
+            cwd=str(BASE_DIR),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError("get_iplayer could not update the 6 Music schedule.")
+        return result.stdout
+
+    def _refresh(self):
+        self.profile_dir.mkdir(parents=True, exist_ok=True)
+        self._run(
+            [
+                "--type=radio",
+                "--refresh",
+                "--refresh-future",
+                "--refresh-exclude-groups-radio=national,regional,local",
+                "--refresh-include=BBC Radio 6 Music",
+                "--refresh-limit-radio=1",
+            ],
+            timeout=120,
+        )
+        output = self._run(
+            [
+                "--type=radio",
+                "--future",
+                "--channel=BBC Radio 6 Music",
+                "--pagesize=500",
+                f"--listformat={self.LIST_FORMAT}",
+                ".*",
+            ],
+            timeout=30,
+        )
+        programmes = get_iplayer_schedule_from_output(output)
+        if not programmes:
+            raise RuntimeError("get_iplayer returned an empty 6 Music schedule.")
+        return programmes
+
+    def get(self, at=None):
+        with self.lock:
+            now = time.monotonic()
+            if not self.programmes or now - self.cached_at >= self.cache_seconds:
+                try:
+                    self.programmes = self._refresh()
+                except (OSError, RuntimeError, subprocess.SubprocessError):
+                    if not self.programmes:
+                        raise
+                finally:
+                    self.cached_at = now
+            return current_schedule_programme(self.programmes, at=at)
 
 
 def now_playing_delay_seconds(value):
@@ -839,6 +1108,21 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _read_json_request(self, maximum=16_384):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+        if length < 1 or length > maximum:
+            raise ValueError("Invalid request.")
+        try:
+            value = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ValueError("Invalid request.") from exc
+        if not isinstance(value, dict):
+            raise ValueError("Invalid request.")
+        return value
+
     def _resolve_output_file(self, encoded_name):
         filename = unquote(encoded_name)
         if not filename or filename != Path(filename).name:
@@ -969,15 +1253,29 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
             try:
                 payload = self.server.now_playing_service.get()
             except NOW_PLAYING_FETCH_ERRORS:
-                self._send_json(
-                    HTTPStatus.BAD_GATEWAY,
-                    {"error": "BBC 6 Music track information is unavailable."},
+                payload = {"available": False, "now_playing": False}
+            try:
+                programme = self.server.schedule_service.get()
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                programme = {
+                    "available": False,
+                    "schedule_url": BBC_6MUSIC_SCHEDULE_URL,
+                }
+            payload["show"] = programme
+            if programme.get("available"):
+                payload.update(
+                    {
+                        "programme_pid": programme["pid"],
+                        "programme": programme["title"],
+                        "programme_subtitle": programme["subtitle"],
+                        "presenter": programme["presenter"],
+                        "programme_image_url": programme["image_url"],
+                    }
                 )
-            else:
-                payload["display_delay_seconds"] = (
-                    self.server.now_playing_delay_seconds
-                )
-                self._send_json(HTTPStatus.OK, payload)
+            payload["display_delay_seconds"] = self.server.now_playing_delay_seconds
+            self._send_json(HTTPStatus.OK, payload)
+        elif path == "/api/favourites":
+            self._send_json(HTTPStatus.OK, self.server.favourite_store.list())
         elif path.startswith("/api/jobs/"):
             job_id = path.rsplit("/", 1)[-1]
             job = self.server.job_store.snapshot(job_id)
@@ -995,27 +1293,30 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self):
-        if urlsplit(self.path).path != "/api/jobs":
+        path = urlsplit(self.path).path
+        if path == "/api/favourites":
+            try:
+                track = self.server.favourite_store.add(self._read_json_request())
+            except ValueError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            except OSError:
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": "The favourite could not be saved on the server."},
+                )
+                return
+            self._send_json(HTTPStatus.CREATED, {"saved": True, "track": track})
+            return
+        if path != "/api/jobs":
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            length = 0
-        if length < 1 or length > 4096:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid request."})
-            return
-        try:
-            data = json.loads(self.rfile.read(length).decode("utf-8"))
-            if not isinstance(data, dict):
-                raise ValueError("Invalid request.")
+            data = self._read_json_request(maximum=4096)
             sounds_url = data.get("url", "")
             if not isinstance(sounds_url, str):
                 raise ValueError("Invalid URL.")
             job = self.server.job_store.create(sounds_url)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid request."})
-            return
         except ValueError as exc:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
@@ -1023,6 +1324,20 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         path = urlsplit(self.path).path
+        if path == "/api/favourites":
+            try:
+                removed = self.server.favourite_store.remove(self._read_json_request())
+            except ValueError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            except OSError:
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": "The favourite could not be removed from the server."},
+                )
+                return
+            self._send_json(HTTPStatus.OK, {"removed": removed})
+            return
         if not path.startswith("/api/jobs/"):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
@@ -1050,8 +1365,18 @@ class SkipNewsServer(ThreadingHTTPServer):
     def __init__(self, address, job_store):
         super().__init__(address, SkipNewsHandler)
         self.job_store = job_store
+        self.favourite_store = FavouriteStore(
+            os.environ.get(
+                "SKIP_NEWS_FAVOURITES_FILE",
+                str(job_store.output_dir / "favourites.json"),
+            )
+        )
         self.now_playing_service = BBCNowPlayingService(
             os.environ.get("BBC_NOW_PLAYING_URL", BBC_NOW_PLAYING_URL)
+        )
+        self.schedule_service = BBCScheduleService(
+            job_store.output_dir / ".get_iplayer_schedule",
+            executable=os.environ.get("GET_IPLAYER", "get_iplayer"),
         )
         self.now_playing_delay_seconds = now_playing_delay_seconds(
             os.environ.get(

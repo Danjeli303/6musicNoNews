@@ -113,7 +113,6 @@ Record Label: Example Records
 Duration: 00:00:02
 --------
 """
-
     def test_parses_get_iplayer_track_information(self):
         tracks = skip_news_web.parse_get_iplayer_tracklist(
             self.TRACKLIST, pid="m0030yw7"
@@ -177,6 +176,39 @@ timeline: input_samples=250 output_samples=200 discarded_samples=50
         )
 
 
+class FavouriteStoreTests(unittest.TestCase):
+    def test_persists_lastfm_shaped_favourites_between_instances(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            path = Path(output_dir) / "favourites.json"
+            store = skip_news_web.FavouriteStore(path)
+            saved = store.add(
+                {
+                    "name": "Example Track",
+                    "artist": {"name": "Example Artist"},
+                    "programme": "Lauren Laverne",
+                    "presenter": "Lauren Laverne",
+                    "programme_pid": "m00318j8",
+                }
+            )
+
+            self.assertEqual(saved["name"], "Example Track")
+            reloaded = skip_news_web.FavouriteStore(path)
+            self.assertEqual(reloaded.list()["tracks"][0]["programme"], "Lauren Laverne")
+            self.assertTrue(reloaded.remove(saved))
+            self.assertEqual(skip_news_web.FavouriteStore(path).list(), {"tracks": []})
+
+    def test_readding_a_track_updates_context_without_duplication(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            store = skip_news_web.FavouriteStore(Path(output_dir) / "favourites.json")
+            track = {"name": "Track", "artist": {"name": "Artist"}}
+            store.add({**track, "programme": "First show"})
+            store.add({**track, "programme": "Current show"})
+
+            favourites = store.list()["tracks"]
+            self.assertEqual(len(favourites), 1)
+            self.assertEqual(favourites[0]["programme"], "Current show")
+
+
 class NowPlayingTests(unittest.TestCase):
     def test_normalizes_current_bbc_6_music_track(self):
         result = skip_news_web.bbc_now_playing_from_payload(
@@ -233,6 +265,65 @@ class NowPlayingTests(unittest.TestCase):
             skip_news_web.now_playing_delay_seconds("invalid"),
             skip_news_web.DEFAULT_NOW_PLAYING_DELAY_SECONDS,
         )
+
+
+class ScheduleTests(unittest.TestCase):
+    OUTPUT = (
+        "SKIPPER|||m00318j6|||Nick Grimshaw|||Guests, chat and really good songs|||"
+        "2026-09-14T09:00:00+00:00|||10800|||"
+        "https://ichef.bbci.co.uk/images/ic/192xn/p0m53m3f.jpg|||"
+        "https://www.bbc.co.uk/programmes/m00318j6\n"
+        "SKIPPER|||m00318j8|||Lauren Laverne|||Words from Gemma Cairney|||"
+        "2026-09-14T12:00:00+00:00|||10800|||"
+        "https://ichef.bbci.co.uk/images/ic/192xn/p0m53ld7.jpg|||"
+        "https://www.bbc.co.uk/programmes/m00318j8\n"
+    )
+
+    def test_selects_current_programme_from_get_iplayer_schedule(self):
+        programmes = skip_news_web.get_iplayer_schedule_from_output(self.OUTPUT)
+        current = skip_news_web.current_schedule_programme(
+            programmes,
+            at=skip_news_web.datetime.fromisoformat("2026-09-14T10:30:00+00:00"),
+        )
+
+        self.assertEqual(current["pid"], "m00318j8")
+        self.assertEqual(current["title"], "Lauren Laverne")
+        self.assertEqual(current["subtitle"], "Words from Gemma Cairney")
+        self.assertEqual(
+            current["image_url"],
+            "https://ichef.bbci.co.uk/images/ic/640x640/p0m53ld7.jpg",
+        )
+        self.assertEqual(current["start_time"], "2026-09-14T09:00:00+00:00")
+        self.assertEqual(current["end_time"], "2026-09-14T12:00:00+00:00")
+        self.assertNotIn("start_timestamp", current)
+
+    def test_schedule_service_refreshes_once_per_hour(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            service = skip_news_web.BBCScheduleService(output_dir)
+            calls = []
+
+            def refresh():
+                calls.append(True)
+                return skip_news_web.get_iplayer_schedule_from_output(self.OUTPUT)
+
+            service._refresh = refresh
+            at = skip_news_web.datetime.fromisoformat("2026-09-14T10:30:00+00:00")
+            self.assertTrue(service.get(at=at)["available"])
+            self.assertTrue(service.get(at=at)["available"])
+            self.assertEqual(len(calls), 1)
+            service.cached_at -= service.cache_seconds + 1
+            self.assertTrue(service.get(at=at)["available"])
+            self.assertEqual(len(calls), 2)
+
+    def test_bridges_a_short_gap_in_get_iplayer_schedule(self):
+        programmes = skip_news_web.get_iplayer_schedule_from_output(self.OUTPUT)
+        current = skip_news_web.current_schedule_programme(
+            programmes,
+            at=skip_news_web.datetime.fromisoformat("2026-09-14T12:30:00+00:00"),
+        )
+
+        self.assertEqual(current["title"], "Lauren Laverne")
+        self.assertTrue(current["schedule_inferred"])
 
 
 class WrapperTests(unittest.TestCase):
@@ -557,6 +648,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('id="now-playing-title"', html)
         self.assertIn('id="live-now-playing-title"', html)
         self.assertIn('id="live-now-playing-favourite"', html)
+        self.assertIn('id="live-programme-image"', html)
         self.assertIn('fetch("/api/now-playing"', app)
         self.assertIn("setInterval(loadNowPlaying, 5000)", app)
         self.assertIn("display_delay_seconds", app)
@@ -566,6 +658,11 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn("navigator.mediaSession.setPositionState", app)
         self.assertIn("activeMediaPlayer === radioPlayer", app)
         self.assertIn("renderHeaderHistory(entry", app)
+        self.assertIn("renderHeaderProgramme(currentLiveProgramme)", app)
+        self.assertNotIn("renderLiveProgramme(currentLiveProgramme)", app)
+        self.assertIn("radioStatus.textContent = liveProgrammeStatus()", app)
+        self.assertIn("grid-template-columns: 190px minmax(0, 1fr)", styles)
+        self.assertIn("object-fit: contain", styles)
         self.assertIn(
             ".history-player-wrap .video-js.vjs-layout-tiny .vjs-progress-control",
             styles,
@@ -580,6 +677,7 @@ class DeploymentTests(unittest.TestCase):
 
     def test_favourites_use_a_shared_lastfm_compatible_store(self):
         html = (ROOT / "web/index.html").read_text(encoding="utf-8")
+        app = (ROOT / "web/app.js").read_text(encoding="utf-8")
         favourites = (ROOT / "web/favourites.js").read_text(encoding="utf-8")
         favourites_page = (ROOT / "web/favourites.html").read_text(encoding="utf-8")
 
@@ -590,6 +688,8 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('src="/favourites.js"', html)
         self.assertIn('src="/favourites-page.js"', html)
         self.assertIn("skipper.favouriteTracks.v1", favourites)
+        self.assertIn('const API_URL = "/api/favourites"', favourites)
+        self.assertIn("window.SkipperFavourites.load()", app)
         self.assertIn("https://www.google.com/search?q=", favourites)
         self.assertIn("programme: clean(track?.programme)", favourites)
         self.assertIn("presenter: clean(track?.presenter)", favourites)
