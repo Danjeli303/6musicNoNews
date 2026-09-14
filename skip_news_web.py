@@ -74,6 +74,9 @@ FIP_COVER_PATTERN = re.compile(
 DEFAULT_NEWS_STATUS_FILE = (
     BASE_DIR / "hls_radio6music_noNews" / "news-status.json"
 )
+DEFAULT_NEWS_CONTROL_PIPE = (
+    BASE_DIR / "hls_radio6music_noNews" / "news-control.fifo"
+)
 BBC_6MUSIC_SCHEDULE_URL = "https://www.bbc.co.uk/sounds/schedules/bbc_6music"
 BBC_IMAGE_HOST = "ichef.bbci.co.uk"
 DEFAULT_NOW_PLAYING_DELAY_SECONDS = 18
@@ -316,6 +319,27 @@ class NewsStatusService:
             }
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             return {"news_active": False, "fresh": False}
+
+
+class NewsControlService:
+    """Send manual news transitions to the live mixer's event FIFO."""
+
+    def __init__(self, path):
+        self.path = Path(path).resolve()
+
+    def set_fip(self, enabled):
+        if type(enabled) is not bool:
+            raise ValueError("The FIP setting must be true or false.")
+        if not self.path.is_fifo():
+            raise OSError("The live-stream control pipe is unavailable.")
+        event = "news_on" if enabled else "news_off"
+        message = f"NEWS_EVENT {event} sample=0 delay_ms=0\n".encode("ascii")
+        descriptor = os.open(self.path, os.O_WRONLY | os.O_NONBLOCK)
+        try:
+            os.write(descriptor, message)
+        finally:
+            os.close(descriptor)
+        return {"fip_enabled": enabled, "event": event}
 
 
 class FavouriteStore:
@@ -1467,6 +1491,22 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path
+        if path == "/api/fip-toggle":
+            try:
+                result = self.server.news_control_service.set_fip(
+                    self._read_json_request(maximum=1024).get("enabled")
+                )
+            except ValueError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                return
+            except OSError:
+                self._send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": "The live-stream mixer is unavailable."},
+                )
+                return
+            self._send_json(HTTPStatus.OK, result)
+            return
         if path == "/api/favourites":
             try:
                 track = self.server.favourite_store.add(self._read_json_request())
@@ -1555,6 +1595,9 @@ class SkipNewsServer(ThreadingHTTPServer):
                 "NEWS_STATUS_FILE", str(DEFAULT_NEWS_STATUS_FILE)
             ),
             os.environ.get("NEWS_STATUS_MAX_AGE_SECONDS", "600"),
+        )
+        self.news_control_service = NewsControlService(
+            os.environ.get("NEWS_CONTROL_PIPE", str(DEFAULT_NEWS_CONTROL_PIPE))
         )
         self.schedule_service = BBCScheduleService(
             job_store.output_dir / ".get_iplayer_schedule",

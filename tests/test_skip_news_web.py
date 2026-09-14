@@ -352,6 +352,44 @@ class NewsStatusTests(unittest.TestCase):
             self.assertFalse(service.get(now=111)["news_active"])
 
 
+class NewsControlTests(unittest.TestCase):
+    def test_sends_manual_news_events_to_fifo(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            path = Path(output_dir) / "news-control.fifo"
+            os.mkfifo(path)
+            reader = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            try:
+                service = skip_news_web.NewsControlService(path)
+                self.assertEqual(
+                    service.set_fip(True),
+                    {"fip_enabled": True, "event": "news_on"},
+                )
+                self.assertEqual(
+                    os.read(reader, 1024),
+                    b"NEWS_EVENT news_on sample=0 delay_ms=0\n",
+                )
+                self.assertEqual(
+                    service.set_fip(False),
+                    {"fip_enabled": False, "event": "news_off"},
+                )
+                self.assertEqual(
+                    os.read(reader, 1024),
+                    b"NEWS_EVENT news_off sample=0 delay_ms=0\n",
+                )
+            finally:
+                os.close(reader)
+
+    def test_rejects_invalid_setting_or_missing_fifo(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            service = skip_news_web.NewsControlService(
+                Path(output_dir) / "news-control.fifo"
+            )
+            with self.assertRaises(ValueError):
+                service.set_fip("yes")
+            with self.assertRaises(OSError):
+                service.set_fip(True)
+
+
 class ScheduleTests(unittest.TestCase):
     OUTPUT = (
         "SKIPPER|||m00318j6|||Nick Grimshaw|||Guests, chat and really good songs|||"
@@ -734,6 +772,10 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('id="live-now-playing-title"', html)
         self.assertIn('id="live-now-playing-favourite"', html)
         self.assertIn('id="live-programme-image"', html)
+        self.assertIn('id="fip-toggle"', html)
+        self.assertIn('role="switch"', html)
+        self.assertIn('fetch("/api/fip-toggle"', app)
+        self.assertIn('.fip-toggle[aria-checked="true"]', styles)
         self.assertIn('fetch("/api/now-playing"', app)
         self.assertIn("setInterval(loadNowPlaying, 5000)", app)
         self.assertIn("display_delay_seconds", app)
@@ -772,8 +814,10 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn("volume@bbc=1", script)
         self.assertIn("volume@fip=0", script)
         self.assertIn('"$NEWS_MIXER_CONTROL" "$NEWS_STATUS_FILE"', script)
+        self.assertIn('NEWS_EVENT_PIPE="$NEWS_CONTROL_PIPE"', script)
         self.assertNotIn("sidechaincompress", script)
         self.assertIn("NEWS_STATUS_FILE: /srv/hls/news-status.json", compose)
+        self.assertIn("NEWS_CONTROL_PIPE: /srv/hls/news-control.fifo", compose)
         self.assertIn("- hls_data:/srv/hls:ro", compose)
 
     def test_favourites_use_a_shared_lastfm_compatible_store(self):

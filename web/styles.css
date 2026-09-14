@@ -293,6 +293,64 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
   padding: 28px;
 }
 
+.fip-toggle-row {
+  min-height: 24px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.fip-toggle-status {
+  color: #aaa;
+  font-size: 0.62rem;
+}
+
+.fip-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 5px 3px 7px;
+  border: 1px solid #7c2756;
+  border-radius: 999px;
+  color: #ff80c3;
+  background: #4b0029;
+  font: inherit;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.fip-toggle i {
+  position: relative;
+  width: 25px;
+  height: 14px;
+  border-radius: 999px;
+  background: #241018;
+  transition: background 160ms ease;
+}
+
+.fip-toggle i::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ff80c3;
+  transition: transform 160ms ease;
+}
+
+.fip-toggle[aria-checked="true"] i { background: #e2007a; }
+.fip-toggle[aria-checked="true"] i::after { transform: translateX(11px); background: #fff; }
+.fip-toggle:hover { border-color: #ff80c3; }
+.fip-toggle:focus-visible { outline: 2px solid #ff80c3; outline-offset: 2px; }
+.fip-toggle:disabled { cursor: wait; opacity: 0.65; }
+
 .header-now-playing {
   min-width: 0;
   max-width: 390px;

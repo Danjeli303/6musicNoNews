@@ -114,6 +114,7 @@ Open `https://PUBLIC_HOST/`. The page provides:
 
 - the news-skipped live stream with BBC metadata during normal playback
 - FIP programme, track, and artwork metadata while FIP replaces scheduled news
+- a small FIP switch on the live player for manually fading between stations
 - BBC Sounds programme processing with progress
 - playback, download, and removal of completed programmes
 - current-track details during live and processed playback
@@ -185,6 +186,7 @@ default. Useful environment variables:
 - `BBC_FADE_IN_MS`
 - `MIXER_CONTROL_ENDPOINT`
 - `NEWS_STATUS_FILE`
+- `NEWS_CONTROL_PIPE`
 
 The live script sends a copy of decoded BBC PCM to `news_identifier`. FFmpeg
 delays only the untouched BBC branch by the classifier look-ahead; FIP remains
@@ -194,7 +196,9 @@ ZeroMQ: `news_on` fades BBC out and FIP in, and `news_off` fades FIP out and BBC
 back in. Schedule events describe the configured bulletin window but do not
 hold the audio gate open. The controller atomically writes `news-status.json`,
 which tells the web service when to show FIP programme, track, and artwork
-metadata.
+metadata. The live-player FIP switch writes manual `news_on` and `news_off`
+events to the same control FIFO, so it uses the same fades as automatic news
+replacement.
 
 AWS deployment notes are in [docs/aws-deploy.md](docs/aws-deploy.md). The Alexa
 skill scaffold is in [alexa-skill/README.md](alexa-skill/README.md).

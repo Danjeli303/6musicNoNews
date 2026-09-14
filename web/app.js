@@ -45,6 +45,8 @@ const liveProgrammeImage = document.querySelector("#live-programme-image");
 const liveProgrammeImageFallback = document.querySelector(
   "#live-programme-image-fallback",
 );
+const fipToggle = document.querySelector("#fip-toggle");
+const fipToggleStatus = document.querySelector("#fip-toggle-status");
 
 let pollTimer;
 let displayedJobId;
@@ -438,12 +440,47 @@ function queueNowPlaying(track) {
   }, delaySeconds * 1000);
 }
 
+function setFipToggleState(enabled) {
+  if (!fipToggle) return;
+  fipToggle.setAttribute("aria-checked", enabled ? "true" : "false");
+  fipToggle.setAttribute(
+    "aria-label",
+    enabled
+      ? "Return to BBC Radio 6 Music"
+      : "Play FIP instead of BBC Radio 6 Music",
+  );
+}
+
+async function toggleFip() {
+  if (!fipToggle || fipToggle.disabled) return;
+  const enabled = fipToggle.getAttribute("aria-checked") !== "true";
+  fipToggle.disabled = true;
+  fipToggleStatus.textContent = "Switching…";
+  try {
+    const response = await fetch("/api/fip-toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    await readResponse(response);
+    setFipToggleState(enabled);
+    fipToggleStatus.textContent = "";
+    setTimeout(loadNowPlaying, 500);
+  } catch (error) {
+    fipToggleStatus.textContent = error.message || "Unavailable";
+  } finally {
+    fipToggle.disabled = false;
+  }
+}
+
 async function loadNowPlaying() {
   if (nowPlayingRequestInFlight) return;
   nowPlayingRequestInFlight = true;
   try {
     const response = await fetch("/api/now-playing", { cache: "no-store" });
-    queueNowPlaying(await readResponse(response));
+    const track = await readResponse(response);
+    setFipToggleState(track.news?.news_active === true);
+    queueNowPlaying(track);
   } catch (_error) {
     if (!nowPlayingHasTrack) renderNowPlaying({ available: false });
   } finally {
@@ -1043,6 +1080,8 @@ headerRadioToggle.addEventListener("click", () => {
     player.pause();
   }
 });
+
+fipToggle?.addEventListener("click", toggleFip);
 
 window.addEventListener("storage", () => {
   updateFavouriteButton(

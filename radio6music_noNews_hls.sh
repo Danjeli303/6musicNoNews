@@ -16,6 +16,7 @@ PLAYLIST="$OUT_DIR/radio6music_noNews.m3u8"
 SEGMENT_PATTERN="$OUT_DIR/radio6music_noNews_%05d.ts"
 LOG="$OUT_DIR/radio6music_noNews_hls.log"
 NEWS_STATUS_FILE="${NEWS_STATUS_FILE:-$OUT_DIR/news-status.json}"
+NEWS_CONTROL_PIPE="${NEWS_CONTROL_PIPE:-$OUT_DIR/news-control.fifo}"
 
 FIP_VOLUME="${FIP_VOLUME:-0.85}"
 BBC_FADE_OUT_MS="${BBC_FADE_OUT_MS:-1200}"
@@ -87,8 +88,15 @@ mix_with_fip_filter() {
 start_news_workers() {
     NEWS_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/news-identifier.XXXXXX")
     NEWS_AUDIO_PIPE="$NEWS_WORK_DIR/audio.fifo"
-    NEWS_EVENT_PIPE="$NEWS_WORK_DIR/events.fifo"
-    mkfifo "$NEWS_AUDIO_PIPE" "$NEWS_EVENT_PIPE"
+    NEWS_EVENT_PIPE="$NEWS_CONTROL_PIPE"
+    mkfifo "$NEWS_AUDIO_PIPE"
+    if [ -e "$NEWS_EVENT_PIPE" ] && [ ! -p "$NEWS_EVENT_PIPE" ]; then
+        printf 'Error: news control path is not a FIFO: %s\n' "$NEWS_EVENT_PIPE" >&2
+        exit 1
+    fi
+    if [ ! -p "$NEWS_EVENT_PIPE" ]; then
+        mkfifo "$NEWS_EVENT_PIPE"
+    fi
 
     "$NEWS_MIXER_CONTROL" "$NEWS_STATUS_FILE" "$MIXER_CONTROL_ENDPOINT" \
       "$FIP_VOLUME" "$BBC_FADE_OUT_MS" "$BBC_FADE_IN_MS" \
@@ -104,7 +112,7 @@ start_news_workers() {
 stop_news_workers() {
     wait "$NEWS_IDENTIFIER_PID" || true
     wait "$NEWS_MIXER_CONTROL_PID" || true
-    rm -f "$NEWS_AUDIO_PIPE" "$NEWS_EVENT_PIPE"
+    rm -f "$NEWS_AUDIO_PIPE"
     rmdir "$NEWS_WORK_DIR"
 }
 
@@ -151,6 +159,7 @@ run_pipeline() {
       -hide_banner \
       -loglevel warning \
       -thread_queue_size 4096 \
+      -re \
       -f s16le -ar "$SAMPLE_RATE" -ac 2 -channel_layout stereo -i pipe:0 \
       $(ffmpeg_live_input_args) \
       -thread_queue_size 4096 \
