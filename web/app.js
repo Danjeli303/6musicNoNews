@@ -39,7 +39,89 @@ let nowPlayingQueueTimer;
 let nowPlayingHasTrack = false;
 let currentLiveTrack;
 let pendingNowPlayingSignature = "";
+let activeMediaPlayer;
 const historyPlayers = new Map();
+
+function mediaSessionAvailable() {
+  return (
+    "mediaSession" in navigator &&
+    typeof window.MediaMetadata === "function"
+  );
+}
+
+function mediaArtwork(track, fallbackArtwork) {
+  const source = track?.image_url || fallbackArtwork;
+  if (!source) return [];
+  try {
+    return [{ src: new URL(source, window.location.href).href }];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function mediaAlbum(track, fallbackAlbum, fallbackPresenter) {
+  const programme = track?.programme || fallbackAlbum || "BBC Radio 6 Music";
+  const presenter = track?.presenter || fallbackPresenter;
+  return presenter && presenter !== programme
+    ? `${programme} · ${presenter}`
+    : programme;
+}
+
+function updateSystemMediaMetadata(track, options = {}) {
+  if (!mediaSessionAvailable() || (!track && !options.title)) return;
+  const item = track || {};
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: item.title || item.name || options.title || "BBC Radio 6 Music",
+      artist:
+        item.artist?.name ||
+        item.artist ||
+        options.artist ||
+        "BBC Radio 6 Music",
+      album: mediaAlbum(item, options.album, options.presenter),
+      artwork: mediaArtwork(item, options.artwork),
+    });
+  } catch (_error) {
+    // Safari versions without full MediaMetadata support retain native controls.
+  }
+}
+
+function updateSystemPlaybackState(state) {
+  if (!mediaSessionAvailable()) return;
+  try {
+    navigator.mediaSession.playbackState = state;
+  } catch (_error) {
+    // Some older Safari releases expose Media Session without playbackState.
+  }
+}
+
+function clearSystemPositionState() {
+  if (!mediaSessionAvailable() || !navigator.mediaSession.setPositionState) return;
+  try {
+    navigator.mediaSession.setPositionState();
+  } catch (_error) {
+    // Position state is optional and is not available in every Safari release.
+  }
+}
+
+function updateSystemPositionState(player) {
+  if (!mediaSessionAvailable() || !navigator.mediaSession.setPositionState) return;
+  const duration = Number(player.duration());
+  const position = Number(player.currentTime());
+  const playbackRate = Number(player.playbackRate());
+  if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(position)) {
+    return;
+  }
+  try {
+    navigator.mediaSession.setPositionState({
+      duration,
+      playbackRate: Number.isFinite(playbackRate) ? playbackRate : 1,
+      position: Math.max(0, Math.min(duration, position)),
+    });
+  } catch (_error) {
+    // Lock-screen seeking remains optional when the browser rejects this state.
+  }
+}
 
 function showNowPlayingFallback() {
   nowPlayingImage.hidden = true;
@@ -96,6 +178,9 @@ function renderNowPlaying(track) {
     showNowPlayingFallback();
   }
   updateFavouriteButton(nowPlayingFavourite, track);
+  if (activeMediaPlayer === radioPlayer) {
+    updateSystemMediaMetadata(track);
+  }
 }
 
 function updateFavouriteButton(button, track) {
@@ -199,18 +284,29 @@ function initialiseRadioPlayer() {
 
   radioPlayer.on("play", () => {
     enforceExclusivePlayback(radioPlayer);
+    activeMediaPlayer = radioPlayer;
+    updateSystemMediaMetadata(currentLiveTrack);
+    clearSystemPositionState();
+    updateSystemPlaybackState("playing");
     radioStatus.textContent = "Connecting to the live stream…";
   });
   radioPlayer.on("playing", () => {
+    updateSystemPlaybackState("playing");
     radioStatus.textContent = "Playing live · News-skipped stream";
   });
   radioPlayer.on("waiting", () => {
     radioStatus.textContent = "Reconnecting to the live stream…";
   });
   radioPlayer.on("pause", () => {
+    if (activeMediaPlayer === radioPlayer) {
+      updateSystemPlaybackState("paused");
+    }
     radioStatus.textContent = "Live stream paused.";
   });
   radioPlayer.on("error", () => {
+    if (activeMediaPlayer === radioPlayer) {
+      updateSystemPlaybackState("none");
+    }
     radioStatus.textContent =
       "The live stream is temporarily unavailable. Try again shortly.";
   });
@@ -429,6 +525,10 @@ function initialiseHistoryPlayers(history) {
       trackInfo,
       favourite,
       tracks: Array.isArray(job.tracks) ? job.tracks : [],
+      artwork: job.artwork_url,
+      album: job.album,
+      presenter: job.title,
+      artist: job.artist,
       currentTrack: undefined,
       trackSignature: "",
     };
@@ -448,7 +548,12 @@ function initialiseHistoryPlayers(history) {
       entry.trackSignature = signature;
       entry.currentTrack = track;
       entry.trackInfo.hidden = !track;
-      if (!track) return;
+      if (!track) {
+        if (activeMediaPlayer === player) {
+          updateSystemMediaMetadata(undefined, entry);
+        }
+        return;
+      }
       const trackTitle = entry.trackInfo.querySelector(".offline-track-title");
       const trackArtist = entry.trackInfo.querySelector(".offline-track-artist");
       trackTitle.textContent = track.title || "Title unavailable";
@@ -457,6 +562,9 @@ function initialiseHistoryPlayers(history) {
       trackTitle.rel = "noopener";
       trackArtist.textContent = track.artist || "Artist unavailable";
       updateFavouriteButton(entry.favourite, track);
+      if (activeMediaPlayer === player) {
+        updateSystemMediaMetadata(track, entry);
+      }
     };
 
     favourite.addEventListener("click", () => {
@@ -465,6 +573,9 @@ function initialiseHistoryPlayers(history) {
       updateFavouriteButton(favourite, entry.currentTrack);
     });
     player.on("timeupdate", renderPlayingTrack);
+    player.on("timeupdate", () => {
+      if (activeMediaPlayer === player) updateSystemPositionState(player);
+    });
     player.on("seeked", renderPlayingTrack);
 
     button.addEventListener("click", () => {
@@ -481,20 +592,39 @@ function initialiseHistoryPlayers(history) {
     });
     player.on("play", () => {
       enforceExclusivePlayback(player);
+      activeMediaPlayer = player;
+      renderPlayingTrack();
+      updateSystemMediaMetadata(entry.currentTrack, {
+        title: entry.title,
+        artist: entry.artist,
+        album: entry.album,
+        presenter: entry.presenter,
+        artwork: entry.artwork,
+      });
+      updateSystemPlaybackState("playing");
       button.classList.add("is-playing");
       button.setAttribute("aria-label", `Stop ${title}`);
       status.textContent = "Starting…";
     });
     player.on("playing", () => {
+      updateSystemPlaybackState("playing");
+      updateSystemPositionState(player);
       status.textContent = "Playing now.";
     });
     player.on("pause", () => {
+      if (activeMediaPlayer === player) {
+        updateSystemPlaybackState("paused");
+        updateSystemPositionState(player);
+      }
       button.classList.remove("is-playing");
       button.setAttribute("aria-label", `Play ${title}`);
       if (status.textContent !== "Stopped.") status.textContent = "Paused.";
     });
     player.on("ended", () => stopHistoryPlayer(entry));
     player.on("error", () => {
+      if (activeMediaPlayer === player) {
+        updateSystemPlaybackState("none");
+      }
       button.classList.remove("is-playing");
       button.setAttribute("aria-label", `Play ${title}`);
       status.textContent = "This programme could not be played.";

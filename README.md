@@ -115,6 +115,10 @@ Open `https://PUBLIC_HOST/`. The page provides:
 - a browser-local favourites list, with Last.fm searches from every track title
 
 Playback does not start automatically and only one player can play at a time.
+On browsers that support Media Session, including current iPhone Safari, the
+active live or processed track is also published to the system Now Playing UI
+with artist, show/presenter context, artwork, playback state, and offline seek
+position.
 Completed files persist in the `skipper_downloads` volume. The HLS stream is
 also available at `https://PUBLIC_HOST/hls/radio6music_noNews.m3u8`.
 

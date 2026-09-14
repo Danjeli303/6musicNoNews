@@ -518,6 +518,11 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('fetch("/api/now-playing"', app)
         self.assertIn("setInterval(loadNowPlaying, 5000)", app)
         self.assertIn("display_delay_seconds", app)
+        self.assertIn('"mediaSession" in navigator', app)
+        self.assertIn("new MediaMetadata", app)
+        self.assertIn("navigator.mediaSession.playbackState", app)
+        self.assertIn("navigator.mediaSession.setPositionState", app)
+        self.assertIn("activeMediaPlayer === radioPlayer", app)
         self.assertIn(
             ".history-player-wrap .video-js.vjs-layout-tiny .vjs-progress-control",
             styles,
