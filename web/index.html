@@ -109,9 +109,21 @@
         <section id="process" class="process-section" aria-labelledby="process-title">
           <div class="process-heading">
             <h2 id="process-title">Process</h2>
-            <p>Paste a BBC Sounds programme link to remove scheduled news.</p>
+            <p>Choose a BBC Radio 6 Music programme or paste a BBC Sounds link to remove scheduled news.</p>
           </div>
           <form id="programme-form" novalidate>
+            <label for="programme-search">Find a 6 Music programme</label>
+            <input
+              id="programme-search"
+              type="search"
+              autocomplete="off"
+              placeholder="Search titles, for example gile"
+            />
+            <label class="programme-select-label" for="programme-select">Available programmes</label>
+            <select id="programme-select">
+              <option value="">Loading BBC Radio 6 Music programmes…</option>
+            </select>
+            <p id="programme-list-status" class="programme-list-status" aria-live="polite"></p>
             <label for="sounds-url">BBC Sounds link</label>
             <div class="input-row">
               <input

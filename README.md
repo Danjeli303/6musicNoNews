@@ -110,6 +110,7 @@ Open `https://PUBLIC_HOST/`. The page provides:
 
 - the news-skipped live stream with BBC track metadata
 - BBC Sounds programme processing with progress
+- searchable BBC Radio 6 Music programme selection from the hourly get_iplayer cache
 - playback, download, and removal of completed programmes
 - current-track details during live and processed playback
 - a browser-local favourites list, with Google searches from every track title

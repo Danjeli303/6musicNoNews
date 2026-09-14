@@ -25,7 +25,7 @@ body {
 }
 
 a { color: inherit; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 
 .sounds-inner,
 .content-shell {
@@ -104,6 +104,24 @@ input {
 
 input:focus { border-color: var(--sounds-light); box-shadow: inset 0 0 0 2px #111; }
 input::placeholder { color: #646464; }
+
+#programme-search,
+#programme-select {
+  width: 100%;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 2px solid #fff;
+  border-radius: 0;
+  color: #111;
+  background: #fff;
+  outline: 0;
+}
+
+#programme-search:focus,
+#programme-select:focus { border-color: var(--sounds-light); box-shadow: inset 0 0 0 2px #111; }
+.programme-select-label { margin-top: 14px; }
+.programme-list-status { min-height: 1.2em; margin: 8px 0 18px; color: #ddd; font-size: 0.74rem; }
+#programme-select:disabled { color: #666; cursor: wait; }
 
 button,
 .download-button {

@@ -1,5 +1,8 @@
 const form = document.querySelector("#programme-form");
 const input = document.querySelector("#sounds-url");
+const programmeSearch = document.querySelector("#programme-search");
+const programmeSelect = document.querySelector("#programme-select");
+const programmeListStatus = document.querySelector("#programme-list-status");
 const submitButton = document.querySelector("#submit-button");
 const card = document.querySelector("#job-card");
 const kicker = document.querySelector("#job-kicker");
@@ -59,6 +62,54 @@ let activeMediaPlayer;
 let activeHeaderEntry;
 let showingProgrammeContext = false;
 const historyPlayers = new Map();
+let availableProgrammes = [];
+
+function programmeOptionLabel(programme) {
+  const detail = programme.episode && programme.episode !== programme.title
+    ? ` — ${programme.episode}`
+    : "";
+  return `${programme.title}${detail}`;
+}
+
+function renderProgrammeOptions() {
+  if (!programmeSelect) return;
+  const query = programmeSearch.value.trim().toLocaleLowerCase();
+  const matches = availableProgrammes.filter((programme) =>
+    programme.title.toLocaleLowerCase().includes(query),
+  );
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = matches.length
+    ? `Choose from ${matches.length} programme${matches.length === 1 ? "" : "s"}`
+    : "No matching 6 Music programmes";
+  programmeSelect.replaceChildren(
+    placeholder,
+    ...matches.map((programme) => {
+      const option = document.createElement("option");
+      option.value = programme.url;
+      option.textContent = programmeOptionLabel(programme);
+      return option;
+    }),
+  );
+  programmeSelect.disabled = matches.length === 0;
+  programmeListStatus.textContent = query
+    ? `${matches.length} title${matches.length === 1 ? "" : "s"} matching “${programmeSearch.value.trim()}”.`
+    : "The list is refreshed hourly from a local 6 Music index.";
+}
+
+async function loadProgrammes() {
+  if (!programmeSelect) return;
+  try {
+    const response = await fetch("/api/programmes", { cache: "no-store" });
+    const data = await readResponse(response);
+    availableProgrammes = Array.isArray(data.programmes) ? data.programmes : [];
+    renderProgrammeOptions();
+  } catch (error) {
+    programmeSelect.disabled = true;
+    programmeSelect.firstElementChild.textContent = "Programme list unavailable";
+    programmeListStatus.textContent = `${error.message} You can still paste a BBC Sounds link.`;
+  }
+}
 
 function updateHeaderRadioToggle(isPlaying, source = "live radio") {
   if (!headerRadioToggle) return;
@@ -949,6 +1000,11 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
+programmeSearch?.addEventListener("input", renderProgrammeOptions);
+programmeSelect?.addEventListener("change", () => {
+  if (programmeSelect.value) input.value = programmeSelect.value;
+});
+
 refreshButton.addEventListener("click", loadJobs);
 
 historyJobs.addEventListener("click", async (event) => {
@@ -1030,6 +1086,8 @@ initialiseRadioPlayer();
 window.SkipperFavourites.load();
 loadNowPlaying();
 loadJobs();
+loadProgrammes();
 setInterval(loadNowPlaying, 5000);
 setInterval(alternateHeaderMetadata, 7000);
 setInterval(loadJobs, 2000);
+setInterval(loadProgrammes, 60 * 60 * 1000);

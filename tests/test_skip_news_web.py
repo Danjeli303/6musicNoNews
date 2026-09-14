@@ -326,6 +326,51 @@ class ScheduleTests(unittest.TestCase):
         self.assertTrue(current["schedule_inferred"])
 
 
+class ProgrammeCatalogueTests(unittest.TestCase):
+    OUTPUT = (
+        "SKIPPER_PROGRAMME|||m00318j6|||Gilles Peterson|||Deep jazz selections|||"
+        "BBC Radio 6 Music|||2026-09-14T18:00:00+00:00|||7200|||"
+        "https://ichef.bbci.co.uk/images/ic/192xn/p0m53m3f.jpg|||"
+        "https://www.bbc.co.uk/programmes/m00318j6\n"
+        "SKIPPER_PROGRAMME|||m00318j7|||Other show|||Wrong station|||"
+        "BBC Radio 4|||2026-09-14T19:00:00+00:00|||3600||||||\n"
+    )
+
+    def test_parser_only_keeps_exact_6_music_programmes(self):
+        programmes = skip_news_web.get_iplayer_programmes_from_output(self.OUTPUT)
+
+        self.assertEqual(len(programmes), 1)
+        self.assertEqual(programmes[0]["title"], "Gilles Peterson")
+        self.assertEqual(
+            programmes[0]["url"],
+            "https://www.bbc.co.uk/sounds/play/m00318j6",
+        )
+
+    def test_reuses_hourly_schedule_refresh_for_programme_search(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            service = skip_news_web.BBCScheduleService(output_dir)
+            refreshes = []
+            searches = []
+            service._refresh = lambda: refreshes.append(True) or [
+                {
+                    "available": True,
+                    "start_timestamp": 0,
+                    "end_timestamp": 1,
+                }
+            ]
+            service._search_programmes = lambda: searches.append(True) or [
+                {"title": "Gilles Peterson"}
+            ]
+
+            service.list_programmes()
+            service.list_programmes()
+            self.assertEqual((len(refreshes), len(searches)), (1, 1))
+            service.cached_at -= service.cache_seconds + 1
+            service.programmes_cached_at -= service.programme_cache_seconds + 1
+            service.list_programmes()
+            self.assertEqual((len(refreshes), len(searches)), (2, 2))
+
+
 class WrapperTests(unittest.TestCase):
     @staticmethod
     def _write_executable(path, body):
@@ -609,6 +654,7 @@ printf 'STAGE=complete\\n'
 class DeploymentTests(unittest.TestCase):
     def test_page_uses_simple_live_process_programmes_order(self):
         html = (ROOT / "web/index.html").read_text(encoding="utf-8")
+        app = (ROOT / "web/app.js").read_text(encoding="utf-8")
 
         self.assertLess(html.index('id="live-stream"'), html.index('id="process"'))
         self.assertLess(html.index('id="process"'), html.index('id="programmes"'))
@@ -618,6 +664,10 @@ class DeploymentTests(unittest.TestCase):
         self.assertNotIn("Your activity", html)
         self.assertNotIn("Your programme.", html)
         self.assertNotIn("Without the news.", html)
+        self.assertIn('id="programme-search"', html)
+        self.assertIn('id="programme-select"', html)
+        self.assertIn('fetch("/api/programmes"', app)
+        self.assertIn("programme.title.toLocaleLowerCase().includes(query)", app)
 
     def test_caddy_routes_hls_and_web_on_the_same_host(self):
         caddyfile = (ROOT / "docker/caddy/Caddyfile").read_text(encoding="utf-8")
