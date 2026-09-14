@@ -6,9 +6,8 @@ of BBC Radio 6 Music helper scripts.
 - `skipper` removes selected sections from the stream, so output duration can
   be shorter than input duration based on [Selective Audio Detection and Filter Copyright (c) 2024 David Bryant.](https://github.com/dbry/skipper)
   
-- `news_identifier` reads live PCM, identifies scheduled news, and emits
-  `schedule_on`, `schedule_off`, `news_on`, and `news_off` events. It never
-  outputs audio.
+- `news_identifier` reads live PCM, identifies scheduled news, and emits only
+  `news_on` and `news_off` events. It never outputs audio.
 - For the live stream, FFmpeg keeps the original BBC audio and crossfades
   between BBC Radio 6 Music and FIP in response to those events.
 - The recorded-file wrappers use `ffmpeg`/`ffprobe` to decode audio, pass PCM
@@ -192,9 +191,9 @@ The live script sends a copy of decoded BBC PCM to `news_identifier`. FFmpeg
 delays only the untouched BBC branch by the classifier look-ahead; FIP remains
 live and current. The identifier emits `NEWS_EVENT` lines on standard error.
 `news_mixer_control` applies those events to named FFmpeg volume filters over
-ZeroMQ: `news_on` fades BBC out and FIP in, and `news_off` fades FIP out and BBC
-back in. Schedule events describe the configured bulletin window but do not
-hold the audio gate open. The controller atomically writes `news-status.json`,
+ZeroMQ: the latest `news_on` event selects FIP and the latest `news_off` event
+selects BBC, even when an event is repeated. There are no separate schedule
+events or delayed station changes. The controller atomically writes `news-status.json`,
 including when a fade is in progress. This tells the web service when to disable
 the station switch and when to show FIP programme, track, and artwork metadata.
 The live-player FIP switch writes manual `news_on` and `news_off`

@@ -26,9 +26,8 @@ static void test_parse_events(void)
     EXPECT_TRUE(parsed.sample == 48000);
     EXPECT_EQ_INT(7250, parsed.delay_milliseconds);
 
-    parsed = parse_event("NEWS_EVENT schedule_off sample=96000\n");
-    EXPECT_EQ_INT(EVENT_SCHEDULE_OFF, parsed.event);
-    EXPECT_TRUE(parsed.sample == 96000);
+    EXPECT_EQ_INT(EVENT_NONE,
+                  parse_event("NEWS_EVENT schedule_off sample=96000\n").event);
 
     EXPECT_EQ_INT(EVENT_NONE, parse_event("NEWS_EVENT news_on sample=-1\n").event);
     EXPECT_EQ_INT(EVENT_NONE, parse_event("unrelated diagnostic\n").event);
@@ -56,24 +55,13 @@ static void test_crossfade_levels(void)
     EXPECT_NEAR(0.5, fip);
 }
 
-static void test_news_off_controls_return_to_bbc(void)
+static void test_latest_news_event_is_authoritative(void)
 {
-    int schedule_active = 0;
-    int news_active = 0;
-
-    EXPECT_EQ_INT(-1, transition_for_event(EVENT_SCHEDULE_ON,
-                                           &schedule_active, &news_active));
-    EXPECT_TRUE(schedule_active);
-    EXPECT_EQ_INT(1, transition_for_event(EVENT_NEWS_ON,
-                                          &schedule_active, &news_active));
-    EXPECT_TRUE(news_active);
-    EXPECT_EQ_INT(0, transition_for_event(EVENT_NEWS_OFF,
-                                          &schedule_active, &news_active));
-    EXPECT_TRUE(!news_active);
-    EXPECT_EQ_INT(-1, transition_for_event(EVENT_SCHEDULE_OFF,
-                                           &schedule_active, &news_active));
-    EXPECT_TRUE(!schedule_active);
-    EXPECT_TRUE(!news_active);
+    EXPECT_EQ_INT(1, state_for_event(EVENT_NEWS_ON));
+    EXPECT_EQ_INT(1, state_for_event(EVENT_NEWS_ON));
+    EXPECT_EQ_INT(0, state_for_event(EVENT_NEWS_OFF));
+    EXPECT_EQ_INT(0, state_for_event(EVENT_NEWS_OFF));
+    EXPECT_EQ_INT(-1, state_for_event(EVENT_NONE));
 }
 
 static void test_transition_status_is_published(void)
@@ -104,7 +92,7 @@ int main(void)
 {
     test_parse_events();
     test_crossfade_levels();
-    test_news_off_controls_return_to_bbc();
+    test_latest_news_event_is_authoritative();
     test_transition_status_is_published();
     if (tests_failed) {
         fprintf(stderr, "%d of %d mixer control tests failed\n", tests_failed, tests_run);

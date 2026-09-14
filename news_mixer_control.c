@@ -15,9 +15,7 @@
 typedef enum {
     EVENT_NONE = 0,
     EVENT_NEWS_ON,
-    EVENT_NEWS_OFF,
-    EVENT_SCHEDULE_ON,
-    EVENT_SCHEDULE_OFF
+    EVENT_NEWS_OFF
 } NewsEvent;
 
 typedef struct {
@@ -34,8 +32,6 @@ static ParsedEvent parse_event(const char *line)
     } events[] = {
         { "NEWS_EVENT news_on sample=", EVENT_NEWS_ON },
         { "NEWS_EVENT news_off sample=", EVENT_NEWS_OFF },
-        { "NEWS_EVENT schedule_on sample=", EVENT_SCHEDULE_ON },
-        { "NEWS_EVENT schedule_off sample=", EVENT_SCHEDULE_OFF },
     };
     ParsedEvent parsed = { EVENT_NONE, 0, 0 };
 
@@ -70,17 +66,6 @@ static ParsedEvent parse_event(const char *line)
     return parsed;
 }
 
-static void sleep_milliseconds(int milliseconds)
-{
-    struct timespec delay = {
-        milliseconds / 1000,
-        (milliseconds % 1000) * 1000000L,
-    };
-
-    while (nanosleep(&delay, &delay) && errno == EINTR) {
-    }
-}
-
 static void mix_levels(double portion, int news_on, double fip_volume,
                        double *bbc_level, double *fip_level)
 {
@@ -107,21 +92,13 @@ static void interpolate_levels(double portion,
                  (target_fip_level - start_fip_level) * portion;
 }
 
-/* Return 1 for a fade to FIP, 0 for a fade to BBC, and -1 for no fade. */
-static int transition_for_event(NewsEvent event, int *schedule_active,
-                                int *news_active)
+/* The latest news event is the complete and authoritative station state. */
+static int state_for_event(NewsEvent event)
 {
-    if (event == EVENT_SCHEDULE_ON) {
-        *schedule_active = 1;
-    } else if (event == EVENT_NEWS_ON && !*news_active) {
-        *news_active = 1;
+    if (event == EVENT_NEWS_ON)
         return 1;
-    } else if (event == EVENT_SCHEDULE_OFF) {
-        *schedule_active = 0;
-    } else if (event == EVENT_NEWS_OFF && *news_active) {
-        *news_active = 0;
+    if (event == EVENT_NEWS_OFF)
         return 0;
-    }
     return -1;
 }
 
@@ -152,12 +129,12 @@ static int fade_mix(void *socket, int news_on, double fip_volume,
     const double start_fip_level = *current_fip_level;
     const double target_bbc_level = news_on ? 0.0 : 1.0;
     const double target_fip_level = news_on ? fip_volume : 0.0;
-    int steps = fade_milliseconds / 20;
+    int steps = fade_milliseconds / 100;
 
     if (steps < 1)
         steps = 1;
-    if (steps > 100)
-        steps = 100;
+    if (steps > 20)
+        steps = 20;
 
     for (int step = 1; step <= steps; ++step) {
         double bbc_level, fip_level;
@@ -213,6 +190,23 @@ static int write_status(const char *path, int news_active, long long sample,
     return 1;
 }
 
+static void *connect_control_socket(void *context, const char *endpoint)
+{
+    void *socket = zmq_socket(context, ZMQ_REQ);
+    int timeout = COMMAND_TIMEOUT_MILLISECONDS;
+    int linger = 0;
+
+    if (!socket)
+        return NULL;
+    zmq_setsockopt(socket, ZMQ_RCVTIMEO, &timeout, sizeof(timeout));
+    zmq_setsockopt(socket, ZMQ_SNDTIMEO, &timeout, sizeof(timeout));
+    zmq_setsockopt(socket, ZMQ_LINGER, &linger, sizeof(linger));
+    if (zmq_connect(socket, endpoint) == 0)
+        return socket;
+    zmq_close(socket);
+    return NULL;
+}
+
 static void usage(const char *program)
 {
     fprintf(stderr,
@@ -231,7 +225,6 @@ int main(int argc, char **argv)
     void *socket;
     char line[1024];
     int news_active = 0;
-    int schedule_active = 0;
     long long last_sample = 0;
     double current_bbc_level = 1.0;
     double current_fip_level = 0.0;
@@ -257,23 +250,14 @@ int main(int argc, char **argv)
     }
 
     context = zmq_ctx_new();
-    socket = context ? zmq_socket(context, ZMQ_REQ) : NULL;
+    socket = context ? connect_control_socket(context, endpoint) : NULL;
     if (!context || !socket) {
-        fprintf(stderr, "Could not create mixer control socket.\n");
-        return 1;
-    }
-    {
-        int timeout = COMMAND_TIMEOUT_MILLISECONDS;
-        int linger = 0;
-        zmq_setsockopt(socket, ZMQ_RCVTIMEO, &timeout, sizeof(timeout));
-        zmq_setsockopt(socket, ZMQ_SNDTIMEO, &timeout, sizeof(timeout));
-        zmq_setsockopt(socket, ZMQ_LINGER, &linger, sizeof(linger));
-    }
-    if (zmq_connect(socket, endpoint) != 0) {
         fprintf(stderr, "Could not connect mixer control to %s: %s\n",
                 endpoint, zmq_strerror(errno));
-        zmq_close(socket);
-        zmq_ctx_term(context);
+        if (socket)
+            zmq_close(socket);
+        if (context)
+            zmq_ctx_term(context);
         return 1;
     }
 
@@ -282,34 +266,39 @@ int main(int argc, char **argv)
 
     while (fgets(line, sizeof(line), stdin)) {
         ParsedEvent parsed = parse_event(line);
-        int transition;
-        int previous_news_active = news_active;
+        int target_state;
+        int fade_succeeded;
         fputs(line, stderr);
         fflush(stderr);
         if (parsed.event == EVENT_NONE)
             continue;
         last_sample = parsed.sample;
-        transition = transition_for_event(parsed.event, &schedule_active,
-                                          &news_active);
-        if (transition == 1) {
-            write_status(status_path, previous_news_active, last_sample, 1);
-            sleep_milliseconds(parsed.delay_milliseconds);
-            if (!fade_mix(socket, 1, fip_volume, fade_out_milliseconds,
-                          &current_bbc_level, &current_fip_level))
-                news_active = current_fip_level > fip_volume / 2.0;
-            write_status(status_path, news_active, last_sample, 0);
-        } else if (transition == 0) {
-            write_status(status_path, previous_news_active, last_sample, 1);
-            sleep_milliseconds(parsed.delay_milliseconds);
-            if (!fade_mix(socket, 0, fip_volume, fade_in_milliseconds,
-                          &current_bbc_level, &current_fip_level))
-                news_active = current_fip_level > fip_volume / 2.0;
-            write_status(status_path, news_active, last_sample, 0);
+        target_state = state_for_event(parsed.event);
+        news_active = target_state;
+        write_status(status_path, news_active, last_sample, 1);
+        if (!socket)
+            socket = connect_control_socket(context, endpoint);
+        fade_succeeded = socket && fade_mix(
+            socket, news_active, fip_volume,
+            news_active ? fade_out_milliseconds : fade_in_milliseconds,
+            &current_bbc_level, &current_fip_level);
+        if (!fade_succeeded) {
+            if (socket)
+                zmq_close(socket);
+            socket = connect_control_socket(context, endpoint);
+            if (socket) {
+                fade_succeeded = fade_mix(
+                    socket, news_active, fip_volume,
+                    news_active ? fade_out_milliseconds : fade_in_milliseconds,
+                    &current_bbc_level, &current_fip_level);
+            }
         }
+        write_status(status_path, news_active, last_sample, !fade_succeeded);
     }
 
     write_status(status_path, 0, last_sample, 0);
-    zmq_close(socket);
+    if (socket)
+        zmq_close(socket);
     zmq_ctx_term(context);
     return 0;
 }

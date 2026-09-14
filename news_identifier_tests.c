@@ -899,7 +899,6 @@ static void test_fast_passthrough_emits_no_audio(void)
     }
     buffers.main_output_buffer = main_output;
     state.main_output_buffer_len = 24;
-    state.schedule_event_state = -1;
     call = (FastPassthroughCall){ &config, &buffers, &state, input, 24 };
 
     run = capture_stdout_from_call(call_write_delayed_passthrough, &call);
@@ -1439,7 +1438,7 @@ static void call_report_news_transitions(void *context)
     report_news_state(call->config, call->state, 0);
 }
 
-static void test_news_off_precedes_schedule_off(void)
+static void test_news_events_do_not_include_schedule_events(void)
 {
     ProgramConfig config;
     ProgramState state;
@@ -1450,16 +1449,13 @@ static void test_news_off_precedes_schedule_off(void)
     config.sample_rate = 1;
     config.time_restricted_silence_enabled = 1;
     memset(&state, 0, sizeof(state));
-    state.schedule_event_state = -1;
     events = capture_stderr_from_call(call_report_news_transitions, &call);
 
     EXPECT_TRUE(events != NULL);
     if (events) {
         EXPECT_STREQ(
-            "NEWS_EVENT schedule_on sample=0 delay_ms=22000\n"
-            "NEWS_EVENT news_on sample=0 delay_ms=22000\n"
-            "NEWS_EVENT news_off sample=12 delay_ms=22000\n"
-            "NEWS_EVENT schedule_off sample=360 delay_ms=0\n",
+            "NEWS_EVENT news_on sample=0 delay_ms=0\n"
+            "NEWS_EVENT news_off sample=12 delay_ms=0\n",
             events);
     }
     free(events);
@@ -1492,7 +1488,7 @@ int main(void)
     test_write_confirmed_audio_keepalive();
     test_flush_remaining_audio();
     test_program_main_emits_no_audio();
-    test_news_off_precedes_schedule_off();
+    test_news_events_do_not_include_schedule_events();
 
     if (tests_failed) {
         fprintf(stderr, "%d of %d news identifier tests failed\n", tests_failed, tests_run);

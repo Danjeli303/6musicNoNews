@@ -162,7 +162,6 @@ typedef struct {
     int64_t next_debug_stream_sample_report; // Next stream sample index for debug reporting
     int64_t fast_passthrough_samples;
     int fast_passthrough_active;
-    int schedule_event_state;
     int news_event_state;
 } ProgramState;
 
@@ -319,7 +318,6 @@ int main (int argc, char **argv) {
     // Initialize ProgramState members not covered by {0} or allocate_audio_buffers
     state.dither_rng_state = 0x31415926; 
     state.current_audio_mode = AUDIO_MODE_NOTHING; 
-    state.schedule_event_state = -1;
     state.news_event_state = 0;
 
     if (config.cpu_clock_schedule_enabled)
@@ -1121,37 +1119,22 @@ static int should_silence_audio_mode_at_sample(const ProgramConfig *config, int 
 
 static void report_news_state(const ProgramConfig *config, ProgramState *state, int news_detected) {
     int64_t output_sample = state->samples_output_audible + state->samples_output_silenced;
-    int64_t schedule_sample = scheduled_sample_index(config, state, output_sample);
-    int64_t processing_lag = state->total_samples_processed - output_sample;
-    int64_t delay_samples = (int64_t)FAST_PASSTHROUGH_DELAY_SECS * config->sample_rate - processing_lag;
-    int delay_milliseconds = delay_samples > 0
-        ? (int)(delay_samples * 1000 / config->sample_rate)
-        : 0;
     int schedule_active = !config->time_restricted_silence_enabled ||
-        is_time_restricted_silence_active_at_sample(config, schedule_sample);
-
-    if (config->time_restricted_silence_enabled &&
-        state->schedule_event_state != schedule_active) {
-        if (state->schedule_event_state >= 0 || schedule_active) {
-            fprintf(stderr, "NEWS_EVENT schedule_%s sample=%lld delay_ms=%d\n",
-                    schedule_active ? "on" : "off", (long long)output_sample,
-                    delay_milliseconds);
-        }
-        state->schedule_event_state = schedule_active;
-    }
+        is_time_restricted_silence_active_at_sample(
+            config, scheduled_sample_index(config, state, output_sample));
 
     if ((!schedule_active || !news_detected) && state->news_event_state) {
         state->news_event_state = 0;
-        fprintf(stderr, "NEWS_EVENT news_off sample=%lld delay_ms=%d\n",
-                (long long)output_sample, delay_milliseconds);
+        fprintf(stderr, "NEWS_EVENT news_off sample=%lld delay_ms=0\n",
+                (long long)output_sample);
         fflush(stderr);
         return;
     }
 
     if (news_detected && schedule_active && !state->news_event_state) {
         state->news_event_state = 1;
-        fprintf(stderr, "NEWS_EVENT news_on sample=%lld delay_ms=%d\n",
-                (long long)output_sample, delay_milliseconds);
+        fprintf(stderr, "NEWS_EVENT news_on sample=%lld delay_ms=0\n",
+                (long long)output_sample);
     }
     fflush(stderr);
 }

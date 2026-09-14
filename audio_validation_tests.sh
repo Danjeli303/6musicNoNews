@@ -365,8 +365,11 @@ run_news_identifier_slice() {
 run_news_identifier_checks() {
     run_news_identifier_slice news 0 "$PROGRAMME_START"
     news_log="$WORK_DIR/news-news-identifier.log"
-    assert_log_contains "$news_log" 'NEWS_EVENT schedule_on sample=' 'scheduled window event'
     assert_log_contains "$news_log" 'NEWS_EVENT news_on sample=' 'news detection event'
+    if grep -E 'NEWS_EVENT schedule_(on|off) sample=' "$news_log" >/dev/null 2>&1; then
+        printf 'Error: news_identifier unexpectedly emitted a schedule event\n' >&2
+        exit 1
+    fi
 
     run_news_identifier_slice music "$SLICE_SECONDS" "$MUSIC_START"
     music_log="$WORK_DIR/music-news-identifier.log"
