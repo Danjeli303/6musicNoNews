@@ -27,55 +27,10 @@ body {
 a { color: inherit; }
 button, input { font: inherit; }
 
-.utility-bar {
-  min-height: 64px;
-  display: flex;
-  align-items: center;
-  background: var(--black);
-  border-bottom: 1px solid #333;
-}
-
-.utility-inner,
 .sounds-inner,
 .content-shell {
   width: min(1240px, calc(100% - 32px));
   margin: 0 auto;
-}
-
-.utility-inner {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.block-logo {
-  display: inline-flex;
-  gap: 5px;
-  color: var(--black);
-  text-decoration: none;
-}
-
-.block-logo b {
-  width: 32px;
-  height: 32px;
-  display: grid;
-  place-items: center;
-  background: #fff;
-  font-size: 1.2rem;
-  line-height: 1;
-}
-
-.utility-name {
-  font-size: 0.88rem;
-  font-weight: 700;
-  border-left: 1px solid #555;
-  padding-left: 16px;
-}
-
-.unofficial {
-  margin-left: auto;
-  color: #aaa;
-  font-size: 0.78rem;
 }
 
 .sounds-bar {
@@ -872,9 +827,7 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 }
 
 @media (max-width: 620px) {
-  .utility-inner, .sounds-inner, .content-shell { width: min(100% - 24px, 1240px); }
-  .utility-name { display: none; }
-  .unofficial { font-size: 0.7rem; }
+  .sounds-inner, .content-shell { width: min(100% - 24px, 1240px); }
   .sounds-logo { padding-left: 4px; }
   nav { overflow-x: auto; }
   nav a { white-space: nowrap; padding: 0 11px; font-size: 0.82rem; }
