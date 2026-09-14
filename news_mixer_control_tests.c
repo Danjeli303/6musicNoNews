@@ -76,11 +76,36 @@ static void test_news_off_controls_return_to_bbc(void)
     EXPECT_TRUE(!news_active);
 }
 
+static void test_transition_status_is_published(void)
+{
+    char path[] = "/tmp/news-mixer-status.XXXXXX";
+    char contents[256] = { 0 };
+    int descriptor = mkstemp(path);
+    FILE *file;
+
+    EXPECT_TRUE(descriptor >= 0);
+    if (descriptor < 0)
+        return;
+    close(descriptor);
+    EXPECT_TRUE(write_status(path, 0, 123, 1));
+    file = fopen(path, "r");
+    EXPECT_TRUE(file != NULL);
+    if (file) {
+        EXPECT_TRUE(fgets(contents, sizeof(contents), file) != NULL);
+        fclose(file);
+    }
+    EXPECT_TRUE(strstr(contents, "\"news_active\":false") != NULL);
+    EXPECT_TRUE(strstr(contents, "\"transitioning\":true") != NULL);
+    EXPECT_TRUE(strstr(contents, "\"sample\":123") != NULL);
+    remove(path);
+}
+
 int main(void)
 {
     test_parse_events();
     test_crossfade_levels();
     test_news_off_controls_return_to_bbc();
+    test_transition_status_is_published();
     if (tests_failed) {
         fprintf(stderr, "%d of %d mixer control tests failed\n", tests_failed, tests_run);
         return 1;

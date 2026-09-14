@@ -65,6 +65,7 @@ let activeHeaderEntry;
 let showingProgrammeContext = false;
 let fipToggleCooldownTimer;
 let fipToggleCooldownUntil = 0;
+let fipMixerTransitioning = false;
 const historyPlayers = new Map();
 
 function updateHeaderRadioToggle(isPlaying, source = "live radio") {
@@ -465,17 +466,25 @@ function startFipToggleCooldown() {
       clearInterval(fipToggleCooldownTimer);
       fipToggleCooldownTimer = undefined;
       fipToggleCooldownUntil = 0;
-      fipToggle.disabled = false;
-      fipToggleStatus.textContent = "";
+      updateFipToggleAvailability();
       loadNowPlaying();
       return;
     }
-    fipToggle.disabled = true;
+    updateFipToggleAvailability();
     fipToggleStatus.textContent = `Switching · ${remainingSeconds}s`;
   };
 
   updateCooldown();
   fipToggleCooldownTimer = setInterval(updateCooldown, 1000);
+}
+
+function updateFipToggleAvailability() {
+  if (!fipToggle) return;
+  const coolingDown = Date.now() < fipToggleCooldownUntil;
+  fipToggle.disabled = coolingDown || fipMixerTransitioning;
+  if (!coolingDown) {
+    fipToggleStatus.textContent = fipMixerTransitioning ? "Switching…" : "";
+  }
 }
 
 async function toggleFip() {
@@ -491,7 +500,6 @@ async function toggleFip() {
       body: JSON.stringify({ enabled }),
     });
     await readResponse(response);
-    setFipToggleState(enabled);
     startFipToggleCooldown();
   } catch (error) {
     setFipToggleState(previousState);
@@ -506,9 +514,9 @@ async function loadNowPlaying() {
   try {
     const response = await fetch("/api/now-playing", { cache: "no-store" });
     const track = await readResponse(response);
-    if (Date.now() >= fipToggleCooldownUntil) {
-      setFipToggleState(track.news?.news_active === true);
-    }
+    fipMixerTransitioning = track.news?.transitioning === true;
+    setFipToggleState(track.news?.news_active === true);
+    updateFipToggleAvailability();
     queueNowPlaying(track);
   } catch (_error) {
     if (!nowPlayingHasTrack) renderNowPlaying({ available: false });

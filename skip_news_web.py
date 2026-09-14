@@ -311,14 +311,21 @@ class NewsStatusService:
             sample = max(0, int(payload.get("sample", 0)))
             current_time = time.time() if now is None else float(now)
             fresh = 0 <= current_time - updated_at <= self.max_age_seconds
+            news_active = payload.get("news_active") is True and fresh
+            transitioning = payload.get("transitioning") is True and fresh
             return {
-                "news_active": payload.get("news_active") is True and fresh,
+                "news_active": news_active,
+                "transitioning": transitioning,
                 "sample": sample,
                 "updated_at_unix": updated_at,
                 "fresh": fresh,
             }
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
-            return {"news_active": False, "fresh": False}
+            return {
+                "news_active": False,
+                "transitioning": False,
+                "fresh": False,
+            }
 
 
 class NewsControlService:

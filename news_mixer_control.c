@@ -180,7 +180,8 @@ static int fade_mix(void *socket, int news_on, double fip_volume,
     return 1;
 }
 
-static int write_status(const char *path, int news_active, long long sample)
+static int write_status(const char *path, int news_active, long long sample,
+                        int transitioning)
 {
     char temporary_path[4096];
     FILE *file;
@@ -192,8 +193,11 @@ static int write_status(const char *path, int news_active, long long sample)
     if (!file)
         return 0;
     if (fprintf(file,
-                "{\"news_active\":%s,\"sample\":%lld,\"updated_at_unix\":%lld}\n",
-                news_active ? "true" : "false", sample, (long long)time(NULL)) < 0) {
+                "{\"news_active\":%s,\"transitioning\":%s,\"sample\":%lld,"
+                "\"updated_at_unix\":%lld}\n",
+                news_active ? "true" : "false",
+                transitioning ? "true" : "false",
+                sample, (long long)time(NULL)) < 0) {
         fclose(file);
         remove(temporary_path);
         return 0;
@@ -273,12 +277,13 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (!write_status(status_path, 0, 0))
+    if (!write_status(status_path, 0, 0, 0))
         fprintf(stderr, "Could not initialize news status file: %s\n", status_path);
 
     while (fgets(line, sizeof(line), stdin)) {
         ParsedEvent parsed = parse_event(line);
         int transition;
+        int previous_news_active = news_active;
         fputs(line, stderr);
         fflush(stderr);
         if (parsed.event == EVENT_NONE)
@@ -287,21 +292,23 @@ int main(int argc, char **argv)
         transition = transition_for_event(parsed.event, &schedule_active,
                                           &news_active);
         if (transition == 1) {
+            write_status(status_path, previous_news_active, last_sample, 1);
             sleep_milliseconds(parsed.delay_milliseconds);
             if (!fade_mix(socket, 1, fip_volume, fade_out_milliseconds,
                           &current_bbc_level, &current_fip_level))
                 news_active = current_fip_level > fip_volume / 2.0;
-            write_status(status_path, news_active, last_sample);
+            write_status(status_path, news_active, last_sample, 0);
         } else if (transition == 0) {
+            write_status(status_path, previous_news_active, last_sample, 1);
             sleep_milliseconds(parsed.delay_milliseconds);
             if (!fade_mix(socket, 0, fip_volume, fade_in_milliseconds,
                           &current_bbc_level, &current_fip_level))
                 news_active = current_fip_level > fip_volume / 2.0;
-            write_status(status_path, news_active, last_sample);
+            write_status(status_path, news_active, last_sample, 0);
         }
     }
 
-    write_status(status_path, 0, last_sample);
+    write_status(status_path, 0, last_sample, 0);
     zmq_close(socket);
     zmq_ctx_term(context);
     return 0;

@@ -322,6 +322,9 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
   letter-spacing: 0.08em;
   line-height: 1;
   cursor: pointer;
+  flex: 0 0 auto;
+  min-height: 24px;
+  white-space: nowrap;
 }
 
 .fip-toggle i {
@@ -951,6 +954,7 @@ main section { scroll-margin-top: 88px; }
   .input-row { grid-template-columns: 1fr; box-shadow: none; }
   input { border-right: 3px solid #fff; }
   button { min-height: 58px; }
+  .fip-toggle { min-height: 24px; }
   .header-radio-toggle, .favourite-button.header-favourite { min-height: 0; }
   .job-heading { align-items: flex-start; }
   .live-section, .process-section { padding: 24px; }

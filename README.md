@@ -195,8 +195,9 @@ live and current. The identifier emits `NEWS_EVENT` lines on standard error.
 ZeroMQ: `news_on` fades BBC out and FIP in, and `news_off` fades FIP out and BBC
 back in. Schedule events describe the configured bulletin window but do not
 hold the audio gate open. The controller atomically writes `news-status.json`,
-which tells the web service when to show FIP programme, track, and artwork
-metadata. The live-player FIP switch writes manual `news_on` and `news_off`
+including when a fade is in progress. This tells the web service when to disable
+the station switch and when to show FIP programme, track, and artwork metadata.
+The live-player FIP switch writes manual `news_on` and `news_off`
 events to the same control FIFO, so it uses the same fades as automatic news
 replacement. After each use it is disabled for 30 seconds while the stream
 transition reaches listeners.

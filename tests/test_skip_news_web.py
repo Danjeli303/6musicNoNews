@@ -324,7 +324,8 @@ class NewsStatusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as output_dir:
             path = Path(output_dir) / "news-status.json"
             path.write_text(
-                '{"news_active":true,"sample":48000,"updated_at_unix":100}',
+                '{"news_active":true,"transitioning":true,"sample":48000,'
+                '"updated_at_unix":100}',
                 encoding="utf-8",
             )
             service = skip_news_web.NewsStatusService(path, max_age_seconds=10)
@@ -333,6 +334,7 @@ class NewsStatusTests(unittest.TestCase):
                 service.get(now=105),
                 {
                     "news_active": True,
+                    "transitioning": True,
                     "sample": 48000,
                     "updated_at_unix": 100,
                     "fresh": True,
@@ -776,8 +778,10 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('role="switch"', html)
         self.assertIn('fetch("/api/fip-toggle"', app)
         self.assertIn("fipToggleCooldownUntil = Date.now() + 30000", app)
+        self.assertIn("track.news?.transitioning === true", app)
         self.assertIn("fipToggle.disabled = true", app)
         self.assertIn('.fip-toggle[aria-checked="true"]', styles)
+        self.assertIn(".fip-toggle { min-height: 24px; }", styles)
         self.assertIn('fetch("/api/now-playing"', app)
         self.assertIn("setInterval(loadNowPlaying, 5000)", app)
         self.assertIn("display_delay_seconds", app)
