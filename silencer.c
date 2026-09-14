@@ -719,7 +719,7 @@ static void write_delayed_passthrough_audio(const ProgramConfig *config, AudioBu
     if (state->main_output_buffer_idx > delay_samples) {
         int samples_to_write = state->main_output_buffer_idx - delay_samples;
 
-        fwrite(buffers->main_output_buffer, sizeof(int16_t) * 2, samples_to_write, stdout);
+        write_audio_output(config, state, buffers->main_output_buffer, samples_to_write, 0);
         state->samples_output_audible += samples_to_write;
         memmove(buffers->main_output_buffer, buffers->main_output_buffer + samples_to_write * 2,
                 (state->main_output_buffer_idx - samples_to_write) * sizeof(int16_t) * 2);

@@ -153,6 +153,14 @@ typedef struct {
     ProgramState *state;
 } SilencingEventCall;
 
+typedef struct {
+    const ProgramConfig *config;
+    AudioBuffers *buffers;
+    ProgramState *state;
+    const int16_t *input;
+    int frames;
+} FastPassthroughCall;
+
 static int test_read_byte(void *context)
 {
     TestByteReader *reader = (TestByteReader *)context;
@@ -475,6 +483,13 @@ static void call_flush_remaining(void *context)
     AudioWriteCall *call = (AudioWriteCall *)context;
     ProgramConfig config = *call->config;
     flush_remaining_audio(&config, call->buffers, call->state);
+}
+
+static void call_write_delayed_passthrough(void *context)
+{
+    FastPassthroughCall *call = (FastPassthroughCall *)context;
+    write_delayed_passthrough_audio(call->config, call->buffers, call->state,
+                                    call->input, call->frames);
 }
 
 static void call_detection_loop(void *context)
@@ -865,6 +880,43 @@ static void test_fast_passthrough_gate(void)
     EXPECT_FALSE(can_fast_passthrough_chunk(&config, &state, 1000));
 
     unlink(path);
+}
+
+static void test_fast_passthrough_preserves_gate_channel(void)
+{
+    ProgramConfig config;
+    AudioBuffers buffers = { 0 };
+    ProgramState state = { 0 };
+    int16_t input[24 * 2];
+    int16_t main_output[24 * 2] = { 0 };
+    int16_t expected[] = {
+        100, -100, 0,
+        200, -200, 0,
+    };
+    FastPassthroughCall call;
+    CapturedRun run;
+
+    initialize_program_config(&config);
+    config.sample_rate = 1;
+    config.input_channels = 2;
+    config.gate_output_enabled = 1;
+    for (int frame = 0; frame < 24; ++frame) {
+        input[frame * 2] = (int16_t)((frame + 1) * 100);
+        input[frame * 2 + 1] = (int16_t)(-((frame + 1) * 100));
+    }
+    buffers.main_output_buffer = main_output;
+    state.main_output_buffer_len = 24;
+    state.output_silencing_state = -1;
+    call = (FastPassthroughCall){ &config, &buffers, &state, input, 24 };
+
+    run = capture_stdout_from_call(call_write_delayed_passthrough, &call);
+
+    EXPECT_EQ_SIZE(sizeof(expected), run.output_size);
+    if (run.output)
+        EXPECT_MEMEQ(expected, run.output, sizeof(expected));
+    EXPECT_EQ_INT(2, (int)state.samples_output_audible);
+    EXPECT_EQ_INT(22, state.main_output_buffer_idx);
+    free(run.output);
 }
 
 static void test_fades(void)
@@ -1462,6 +1514,7 @@ int main(void)
     test_should_silence_audio_mode_at_sample();
     test_bypass_talk_silencing();
     test_fast_passthrough_gate();
+    test_fast_passthrough_preserves_gate_channel();
     test_fades();
     test_buffer_allocation_and_filter_initialization();
     test_populate_main_output_buffer_sample_modes();
