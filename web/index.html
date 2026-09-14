@@ -6,6 +6,11 @@
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#000000" />
     <title>6 Music News Skipper</title>
+    <link
+      id="site-icon"
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='8' fill='%23111'/%3E%3Ctext x='32' y='46' text-anchor='middle' font-family='Arial,sans-serif' font-size='44' font-weight='700' fill='%23ff5b25'%3E6%3C/text%3E%3C/svg%3E"
+    />
     <meta
       name="description"
       content="Listen to BBC 6 Music without scheduled news and process BBC Sounds programmes."
@@ -57,9 +62,9 @@
       <div class="content-shell">
         <section id="live-stream" class="live-section" aria-labelledby="live-title">
           <div class="live-copy">
-            <div class="on-air"><i aria-hidden="true"></i> Live now</div>
+            <div id="live-on-air" class="on-air"><i aria-hidden="true"></i> Live now</div>
             <h1 id="live-title">Live Stream</h1>
-            <p>BBC Radio 6 Music without scheduled news.</p>
+            <p id="live-description">BBC Radio 6 Music without scheduled news.</p>
           </div>
           <div class="live-player-panel">
             <div class="station-mark" aria-hidden="true">
@@ -102,6 +107,17 @@
               <p id="radio-status" class="radio-status" aria-live="polite">
                 Ready to play.
               </p>
+              <div class="fip-toggle-row">
+                <span id="fip-toggle-status" class="fip-toggle-status" aria-live="polite"></span>
+                <button
+                  id="fip-toggle"
+                  class="fip-toggle"
+                  type="button"
+                  role="switch"
+                  aria-checked="false"
+                  aria-label="Play FIP instead of BBC Radio 6 Music"
+                ><span>FIP</span><i aria-hidden="true"></i></button>
+              </div>
             </div>
           </div>
         </section>

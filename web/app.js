@@ -19,6 +19,9 @@ const historyEmpty = document.querySelector("#history-empty");
 const libraryMessage = document.querySelector("#library-message");
 const refreshButton = document.querySelector("#refresh-jobs");
 const radioStatus = document.querySelector("#radio-status");
+const liveSection = document.querySelector("#live-stream");
+const liveDescription = document.querySelector("#live-description");
+const liveOnAir = document.querySelector("#live-on-air");
 const nowPlayingLabel = document.querySelector("#now-playing-label");
 const nowPlayingTitle = document.querySelector("#now-playing-title");
 const nowPlayingArtist = document.querySelector("#now-playing-artist");
@@ -42,6 +45,10 @@ const liveProgrammeImage = document.querySelector("#live-programme-image");
 const liveProgrammeImageFallback = document.querySelector(
   "#live-programme-image-fallback",
 );
+const fipToggle = document.querySelector("#fip-toggle");
+const fipToggleStatus = document.querySelector("#fip-toggle-status");
+const siteIcon = document.querySelector("#site-icon");
+const defaultSiteIcon = siteIcon?.href;
 
 let pollTimer;
 let displayedJobId;
@@ -58,6 +65,9 @@ let pendingNowPlayingSignature = "";
 let activeMediaPlayer;
 let activeHeaderEntry;
 let showingProgrammeContext = false;
+let fipToggleCooldownTimer;
+let fipToggleCooldownUntil = 0;
+let fipMixerTransitioning = false;
 const historyPlayers = new Map();
 
 function updateHeaderRadioToggle(isPlaying, source = "live radio") {
@@ -102,7 +112,8 @@ function mediaArtwork(track, fallbackArtwork) {
 }
 
 function mediaAlbum(track, fallbackAlbum, fallbackPresenter) {
-  const programme = track?.programme || fallbackAlbum || "BBC Radio 6 Music";
+  const programme =
+    track?.programme || fallbackAlbum || track?.station || "BBC Radio 6 Music";
   const presenter = track?.presenter || fallbackPresenter;
   return presenter && presenter !== programme
     ? `${programme} · ${presenter}`
@@ -112,14 +123,15 @@ function mediaAlbum(track, fallbackAlbum, fallbackPresenter) {
 function updateSystemMediaMetadata(track, options = {}) {
   if (!mediaSessionAvailable() || (!track && !options.title)) return;
   const item = track || {};
+  const station = item.station || item.source || "BBC Radio 6 Music";
   try {
     navigator.mediaSession.metadata = new MediaMetadata({
-      title: item.title || item.name || options.title || "BBC Radio 6 Music",
+      title: item.title || item.name || options.title || station,
       artist:
         item.artist?.name ||
         item.artist ||
         options.artist ||
-        "BBC Radio 6 Music",
+        station,
       album: mediaAlbum(item, options.album, options.presenter),
       artwork: mediaArtwork(item, options.artwork),
     });
@@ -186,6 +198,11 @@ function showArtwork(image, fallback, source, alt) {
   image.src = source;
 }
 
+function updateSiteIcon(source) {
+  if (!siteIcon) return;
+  siteIcon.href = source || defaultSiteIcon;
+}
+
 function setTrackLink(element, track, fallback) {
   element.textContent = track?.title || track?.name || fallback;
   if (track && (track.title || track.name)) {
@@ -213,11 +230,39 @@ function setProgrammeLink(element, programme, fallback) {
 }
 
 function programmeDescription(programme) {
-  return programme?.subtitle || programme?.presenter || "BBC Radio 6 Music";
+  return programme?.subtitle || programme?.presenter || "Live radio";
+}
+
+function stationName(track = currentLiveTrack) {
+  return track?.station || track?.source || "BBC Radio 6 Music";
+}
+
+function setLiveStationIdentity(track) {
+  const isFip = stationName(track) === "FIP";
+  liveSection?.classList.toggle("is-fip", isFip);
+  document.body.classList.toggle("is-fip-live", isFip);
+  if (liveDescription) {
+    liveDescription.textContent = isFip
+      ? "FIP while scheduled BBC Radio 6 Music news is being replaced."
+      : "BBC Radio 6 Music without scheduled news.";
+  }
+  if (liveOnAir) liveOnAir.lastChild.textContent = isFip ? " FIP on air" : " Live now";
+
+  const stationStrong = liveProgrammeImageFallback?.querySelector("strong");
+  const stationLabel = liveProgrammeImageFallback?.querySelector("b");
+  if (stationStrong) stationStrong.textContent = isFip ? "FIP" : "6";
+  if (stationLabel) stationLabel.textContent = isFip ? "RADIO FRANCE" : "MUSIC";
+  liveProgrammeImageFallback?.classList.toggle("is-fip", isFip);
+  if (liveNowPlayingImageFallback) {
+    liveNowPlayingImageFallback.textContent = isFip ? "FIP" : "6";
+  }
+  if (nowPlayingImageFallback) {
+    nowPlayingImageFallback.textContent = isFip ? "FIP" : "6";
+  }
 }
 
 function liveProgrammeStatus() {
-  if (!currentLiveProgramme?.available) return "Playing BBC Radio 6 Music live.";
+  if (!currentLiveProgramme?.available) return `Playing ${stationName()} live.`;
   const detail = programmeDescription(currentLiveProgramme);
   return detail && detail !== currentLiveProgramme.title
     ? `${currentLiveProgramme.title} · ${detail}`
@@ -227,31 +272,32 @@ function liveProgrammeStatus() {
 function renderHeaderProgramme(programme) {
   showingProgrammeContext = true;
   nowPlayingLabel.textContent = "Live programme";
-  setProgrammeLink(nowPlayingTitle, programme, "BBC Radio 6 Music");
+  setProgrammeLink(nowPlayingTitle, programme, stationName());
   nowPlayingArtist.textContent = programmeDescription(programme);
   showArtwork(
     nowPlayingImage,
     nowPlayingImageFallback,
     programme?.image_url,
-    `Artwork for ${programme?.title || "BBC Radio 6 Music"}`,
+    `Artwork for ${programme?.title || stationName()}`,
   );
   updateFavouriteButton(nowPlayingFavourite, undefined);
 }
 
 function renderLiveNowPlaying(track) {
+  const station = stationName(track);
   if (!track.available) {
-    liveNowPlayingLabel.textContent = "Now playing";
+    liveNowPlayingLabel.textContent = `Now playing on ${station}`;
     setTrackLink(liveNowPlayingTitle, undefined, "Track information unavailable");
-    liveNowPlayingArtist.textContent = "BBC Radio 6 Music";
+    liveNowPlayingArtist.textContent = station;
     showArtworkFallback(liveNowPlayingImage, liveNowPlayingImageFallback);
     updateFavouriteButton(liveNowPlayingFavourite, undefined);
     return;
   }
   liveNowPlayingLabel.textContent = track.now_playing
-    ? "Now playing"
-    : "Recently played";
+    ? `Now playing on ${station}`
+    : `Recently played on ${station}`;
   setTrackLink(liveNowPlayingTitle, track, "Title unavailable");
-  liveNowPlayingArtist.textContent = track.artist || "BBC Radio 6 Music";
+  liveNowPlayingArtist.textContent = track.artist || station;
   showArtwork(
     liveNowPlayingImage,
     liveNowPlayingImageFallback,
@@ -292,6 +338,8 @@ function nowPlayingTrackSignature(track) {
     track.programme_pid,
     track.programme_image_url,
     track.show?.subtitle,
+    track.source,
+    track.news_active,
   ]);
 }
 
@@ -300,17 +348,19 @@ function renderNowPlaying(track, force = false) {
   if (!force && signature === nowPlayingSignature) return;
   nowPlayingSignature = signature;
   showingProgrammeContext = false;
+  setLiveStationIdentity(track);
   currentLiveProgramme = track.show?.available ? track.show : undefined;
   showArtwork(
     liveProgrammeImage,
     liveProgrammeImageFallback,
     currentLiveProgramme?.image_url,
-    `Artwork for ${currentLiveProgramme?.title || "BBC Radio 6 Music"}`,
+    `Artwork for ${currentLiveProgramme?.title || stationName(track)}`,
   );
+  updateSiteIcon(currentLiveProgramme?.image_url);
 
   if (!track.available) {
     nowPlayingHasTrack = false;
-    currentLiveTrack = undefined;
+    currentLiveTrack = track;
     renderLiveNowPlaying(track);
     if (currentLiveProgramme) {
       if (!(activeHeaderEntry && activeMediaPlayer === activeHeaderEntry.player)) {
@@ -321,7 +371,7 @@ function renderNowPlaying(track, force = false) {
     if (activeHeaderEntry && activeMediaPlayer === activeHeaderEntry.player) return;
     nowPlayingLabel.textContent = "Now playing";
     nowPlayingTitle.textContent = "Track information unavailable";
-    nowPlayingArtist.textContent = "BBC Radio 6 Music";
+    nowPlayingArtist.textContent = stationName(track);
     showNowPlayingFallback();
     updateFavouriteButton(nowPlayingFavourite, undefined);
     return;
@@ -332,10 +382,10 @@ function renderNowPlaying(track, force = false) {
   renderLiveNowPlaying(track);
   if (activeHeaderEntry && activeMediaPlayer === activeHeaderEntry.player) return;
   nowPlayingLabel.textContent = track.now_playing
-    ? "Now playing"
-    : "Recently played";
+    ? `Now playing on ${stationName(track)}`
+    : `Recently played on ${stationName(track)}`;
   setTrackLink(nowPlayingTitle, track, "Title unavailable");
-  nowPlayingArtist.textContent = track.artist || "BBC Radio 6 Music";
+  nowPlayingArtist.textContent = track.artist || stationName(track);
   showArtwork(
     nowPlayingImage,
     nowPlayingImageFallback,
@@ -367,8 +417,11 @@ function updateFavouriteButton(button, track) {
 }
 
 function queueNowPlaying(track) {
-  if (!track.available) {
-    if (!nowPlayingHasTrack) renderNowPlaying(track);
+  if (
+    !track.available &&
+    nowPlayingHasTrack &&
+    track.source === currentLiveTrack?.source
+  ) {
     return;
   }
 
@@ -398,12 +451,81 @@ function queueNowPlaying(track) {
   }, delaySeconds * 1000);
 }
 
+function setFipToggleState(enabled) {
+  if (!fipToggle) return;
+  fipToggle.setAttribute("aria-checked", enabled ? "true" : "false");
+  fipToggle.setAttribute(
+    "aria-label",
+    enabled
+      ? "Return to BBC Radio 6 Music"
+      : "Play FIP instead of BBC Radio 6 Music",
+  );
+}
+
+function startFipToggleCooldown() {
+  fipToggleCooldownUntil = Date.now() + 30000;
+  clearInterval(fipToggleCooldownTimer);
+
+  const updateCooldown = () => {
+    const remainingSeconds = Math.ceil(
+      (fipToggleCooldownUntil - Date.now()) / 1000,
+    );
+    if (remainingSeconds <= 0) {
+      clearInterval(fipToggleCooldownTimer);
+      fipToggleCooldownTimer = undefined;
+      fipToggleCooldownUntil = 0;
+      updateFipToggleAvailability();
+      loadNowPlaying();
+      return;
+    }
+    updateFipToggleAvailability();
+    fipToggleStatus.textContent = `Switching · ${remainingSeconds}s`;
+  };
+
+  updateCooldown();
+  fipToggleCooldownTimer = setInterval(updateCooldown, 1000);
+}
+
+function updateFipToggleAvailability() {
+  if (!fipToggle) return;
+  const coolingDown = Date.now() < fipToggleCooldownUntil;
+  fipToggle.disabled = coolingDown || fipMixerTransitioning;
+  if (!coolingDown) {
+    fipToggleStatus.textContent = fipMixerTransitioning ? "Switching…" : "";
+  }
+}
+
+async function toggleFip() {
+  if (!fipToggle || fipToggle.disabled) return;
+  const enabled = fipToggle.getAttribute("aria-checked") !== "true";
+  const previousState = !enabled;
+  fipToggle.disabled = true;
+  fipToggleStatus.textContent = "Switching…";
+  try {
+    const response = await fetch("/api/fip-toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    await readResponse(response);
+    startFipToggleCooldown();
+  } catch (error) {
+    setFipToggleState(previousState);
+    fipToggleStatus.textContent = error.message || "Unavailable";
+    fipToggle.disabled = false;
+  }
+}
+
 async function loadNowPlaying() {
   if (nowPlayingRequestInFlight) return;
   nowPlayingRequestInFlight = true;
   try {
     const response = await fetch("/api/now-playing", { cache: "no-store" });
-    queueNowPlaying(await readResponse(response));
+    const track = await readResponse(response);
+    fipMixerTransitioning = track.news?.transitioning === true;
+    setFipToggleState(track.news?.news_active === true);
+    updateFipToggleAvailability();
+    queueNowPlaying(track);
   } catch (_error) {
     if (!nowPlayingHasTrack) renderNowPlaying({ available: false });
   } finally {
@@ -1003,6 +1125,8 @@ headerRadioToggle.addEventListener("click", () => {
     player.pause();
   }
 });
+
+fipToggle?.addEventListener("click", toggleFip);
 
 window.addEventListener("storage", () => {
   updateFavouriteButton(

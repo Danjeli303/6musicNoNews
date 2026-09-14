@@ -15,10 +15,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Install audio tools
+      - name: Install build and audio tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg make gcc
+          sudo apt-get install -y --no-install-recommends ffmpeg make gcc libzmq3-dev pkg-config
 
       - name: Run unit tests
         run: make test

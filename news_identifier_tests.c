@@ -6,8 +6,8 @@
 
 #include "lzwlib.h"
 
-#define main silencer_program_main
-#include "silencer.c"
+#define main news_identifier_program_main
+#include "NewsIdentifier.c"
 #undef main
 
 static int tests_run;
@@ -147,6 +147,19 @@ typedef struct {
     ProgramState *state;
     int iterations;
 } DetectionLoopCall;
+
+typedef struct {
+    const ProgramConfig *config;
+    ProgramState *state;
+} NewsEventCall;
+
+typedef struct {
+    const ProgramConfig *config;
+    AudioBuffers *buffers;
+    ProgramState *state;
+    const int16_t *input;
+    int frames;
+} FastPassthroughCall;
 
 static int test_read_byte(void *context)
 {
@@ -291,7 +304,50 @@ done:
     return run;
 }
 
-static CapturedRun run_silencer_with_input(int argc, char **argv, const int16_t *input, size_t frames, int channels)
+static char *capture_stderr_from_call(CapturedCall call, void *context)
+{
+    FILE *stderr_file = tmpfile();
+    int saved_stderr;
+    long output_size;
+    char *output = NULL;
+
+    EXPECT_TRUE(stderr_file != NULL);
+    if (!stderr_file)
+        return NULL;
+
+    fflush(stderr);
+    saved_stderr = dup(fileno(stderr));
+    EXPECT_TRUE(saved_stderr >= 0);
+    if (saved_stderr < 0)
+        goto done;
+
+    EXPECT_TRUE(dup2(fileno(stderr_file), fileno(stderr)) >= 0);
+    call(context);
+    fflush(stderr);
+
+    output_size = ftell(stderr_file);
+    EXPECT_TRUE(output_size >= 0);
+    if (output_size >= 0) {
+        output = malloc((size_t)output_size + 1);
+        EXPECT_TRUE(output != NULL);
+        if (output) {
+            rewind(stderr_file);
+            EXPECT_EQ_SIZE((size_t)output_size,
+                           fread(output, 1, (size_t)output_size, stderr_file));
+            output[output_size] = '\0';
+        }
+    }
+
+    EXPECT_TRUE(dup2(saved_stderr, fileno(stderr)) >= 0);
+    clearerr(stderr);
+    close(saved_stderr);
+
+done:
+    fclose(stderr_file);
+    return output;
+}
+
+static CapturedRun run_news_identifier_with_input(int argc, char **argv, const int16_t *input, size_t frames, int channels)
 {
     CapturedRun run = { 0, NULL, 0 };
     FILE *input_file = tmpfile();
@@ -329,7 +385,7 @@ static CapturedRun run_silencer_with_input(int argc, char **argv, const int16_t 
     clearerr(stdout);
     clearerr(stderr);
 
-    run.status = silencer_program_main(argc, argv);
+    run.status = news_identifier_program_main(argc, argv);
 
     fflush(stdout);
     fflush(stderr);
@@ -419,7 +475,7 @@ static int local_tensor_file_suppressed(tensor_array target, unsigned char *blob
 static void call_write_confirmed(void *context)
 {
     AudioWriteCall *call = (AudioWriteCall *)context;
-    write_confirmed_audio_to_stdout(call->config, call->buffers, call->state);
+    advance_confirmed_timeline(call->config, call->buffers, call->state);
 }
 
 static void call_flush_remaining(void *context)
@@ -427,6 +483,13 @@ static void call_flush_remaining(void *context)
     AudioWriteCall *call = (AudioWriteCall *)context;
     ProgramConfig config = *call->config;
     flush_remaining_audio(&config, call->buffers, call->state);
+}
+
+static void call_write_delayed_passthrough(void *context)
+{
+    FastPassthroughCall *call = (FastPassthroughCall *)context;
+    write_delayed_passthrough_audio(call->config, call->buffers, call->state,
+                                    call->input, call->frames);
 }
 
 static void call_detection_loop(void *context)
@@ -575,7 +638,7 @@ static void test_command_line_parsing(void)
 {
     ProgramConfig config;
     char *argv[] = {
-        "silencer",
+        "news_identifier",
         "-t12",
         "-x",
         "-s48000",
@@ -615,9 +678,9 @@ static void test_command_line_parsing(void)
 static void test_command_line_parsing_accepts_schedule_file(void)
 {
     ProgramConfig config;
-    char path[] = "/tmp/silencer_schedule_test_XXXXXX";
+    char path[] = "/tmp/news_identifier_schedule_test_XXXXXX";
     char *argv[] = {
-        "silencer",
+        "news_identifier",
         "-t",
         "-x",
         "-s11025",
@@ -645,22 +708,22 @@ static void test_command_line_parsing_accepts_schedule_file(void)
 static void test_command_line_parsing_rejects_invalid_inputs(void)
 {
     ProgramConfig config;
-    char *bad_channels[] = { "silencer", "-c3" };
-    char *bad_rate[] = { "silencer", "-s96001" };
-    char *bad_left[] = { "silencer", "-l5" };
-    char *bad_right[] = { "silencer", "-r5" };
-    char *bad_music_threshold[] = { "silencer", "-m100" };
-    char *bad_talk_threshold[] = { "silencer", "-t100" };
-    char *missing_analysis[] = { "silencer", "-a" };
-    char *missing_tensor[] = { "silencer", "-d" };
-    char *missing_time[] = { "silencer", "-T" };
-    char *missing_zone[] = { "silencer", "-z" };
-    char *missing_window[] = { "silencer", "-w" };
-    char *bad_time[] = { "silencer", "-T", "2024-02-30T00:00:00Z" };
-    char *bad_zone[] = { "silencer", "-z+24:00" };
-    char *bad_window[] = { "silencer", "-w0-60" };
-    char *clock_without_time[] = { "silencer", "-e" };
-    char *extra[] = { "silencer", "extra" };
+    char *bad_channels[] = { "news_identifier", "-c3" };
+    char *bad_rate[] = { "news_identifier", "-s96001" };
+    char *bad_left[] = { "news_identifier", "-l5" };
+    char *bad_right[] = { "news_identifier", "-r5" };
+    char *bad_music_threshold[] = { "news_identifier", "-m100" };
+    char *bad_talk_threshold[] = { "news_identifier", "-t100" };
+    char *missing_analysis[] = { "news_identifier", "-a" };
+    char *missing_tensor[] = { "news_identifier", "-d" };
+    char *missing_time[] = { "news_identifier", "-T" };
+    char *missing_zone[] = { "news_identifier", "-z" };
+    char *missing_window[] = { "news_identifier", "-w" };
+    char *bad_time[] = { "news_identifier", "-T", "2024-02-30T00:00:00Z" };
+    char *bad_zone[] = { "news_identifier", "-z+24:00" };
+    char *bad_window[] = { "news_identifier", "-w0-60" };
+    char *clock_without_time[] = { "news_identifier", "-e" };
+    char *extra[] = { "news_identifier", "extra" };
 
     initialize_program_config(&config);
     EXPECT_FALSE(parse_args_suppressed(2, bad_channels, &config));
@@ -764,7 +827,7 @@ static void test_should_silence_audio_mode_at_sample(void)
     EXPECT_TRUE(should_silence_audio_mode_at_sample(&inactive_config, AUDIO_MODE_TALK, 0));
 }
 
-static void test_bypass_talk_silencing(void)
+static void test_outside_news_schedule(void)
 {
     ProgramConfig config = config_with_stream_time("2026-06-20T09:10:00Z", 60);
     ProgramState state = { 0 };
@@ -773,21 +836,21 @@ static void test_bypass_talk_silencing(void)
     config.processing_mode = PROCESSING_MODE_SILENCE_TALK;
     config.time_restricted_silence_enabled = 1;
 
-    EXPECT_TRUE(should_bypass_talk_silencing_due_to_time_restriction(&config, &state));
+    EXPECT_TRUE(is_outside_news_schedule(&config, &state));
 
     config.stream_start_epoch_ms = parse_epoch_ms_or_fail("2026-06-20T05:58:00Z", &config.stream_time_utc_offset_minutes);
     config.stream_time_utc_offset_minutes = 60;
-    EXPECT_FALSE(should_bypass_talk_silencing_due_to_time_restriction(&config, &state));
+    EXPECT_FALSE(is_outside_news_schedule(&config, &state));
 
     config.processing_mode = PROCESSING_MODE_SILENCE_MUSIC;
-    EXPECT_FALSE(should_bypass_talk_silencing_due_to_time_restriction(&config, &state));
+    EXPECT_FALSE(is_outside_news_schedule(&config, &state));
 }
 
 static void test_fast_passthrough_gate(void)
 {
     ProgramConfig config = config_with_stream_time("2026-06-19T06:20:00Z", 0);
     ProgramState state = { 0 };
-    char path[] = "/tmp/silencer_schedule_test_XXXXXX";
+    char path[] = "/tmp/news_identifier_schedule_test_XXXXXX";
 
     if (!write_schedule_fixture(path))
         return;
@@ -815,6 +878,35 @@ static void test_fast_passthrough_gate(void)
     EXPECT_FALSE(can_fast_passthrough_chunk(&config, &state, 1000));
 
     unlink(path);
+}
+
+static void test_fast_passthrough_emits_no_audio(void)
+{
+    ProgramConfig config;
+    AudioBuffers buffers = { 0 };
+    ProgramState state = { 0 };
+    int16_t input[24 * 2];
+    int16_t main_output[24 * 2] = { 0 };
+    FastPassthroughCall call;
+    CapturedRun run;
+
+    initialize_program_config(&config);
+    config.sample_rate = 1;
+    config.input_channels = 2;
+    for (int frame = 0; frame < 24; ++frame) {
+        input[frame * 2] = (int16_t)((frame + 1) * 100);
+        input[frame * 2 + 1] = (int16_t)(-((frame + 1) * 100));
+    }
+    buffers.main_output_buffer = main_output;
+    state.main_output_buffer_len = 24;
+    call = (FastPassthroughCall){ &config, &buffers, &state, input, 24 };
+
+    run = capture_stdout_from_call(call_write_delayed_passthrough, &call);
+
+    EXPECT_EQ_SIZE(0, run.output_size);
+    EXPECT_EQ_INT(2, (int)state.samples_output_audible);
+    EXPECT_EQ_INT(22, state.main_output_buffer_idx);
+    free(run.output);
 }
 
 static void test_fades(void)
@@ -991,7 +1083,7 @@ static void test_tensor_loading_round_trip(void)
     size_t blob_size = 0;
     unsigned char *blob;
     unsigned char *bad_blob;
-    char path[] = "/tmp/silencer_tensor_test_XXXXXX";
+    char path[] = "/tmp/news_identifier_tensor_test_XXXXXX";
     int fd;
     FILE *file;
 
@@ -1121,7 +1213,7 @@ static void test_transition_to_silence_fades_from_transition_point(void)
     call.iterations = AVERAGING_BUFFER_COUNT + MIN_TALK_DURATION_SECS * 1000 / ANALYSIS_STEP_MSECS - 1;
 
     run = capture_stdout_from_call(call_detection_loop, &call);
-    EXPECT_EQ_SIZE(sizeof(expected), run.output_size);
+    EXPECT_EQ_SIZE(0, run.output_size);
     if (run.output)
         EXPECT_MEMEQ(expected, run.output, sizeof(expected));
     EXPECT_EQ_INT(202, (int)state.samples_output_audible);
@@ -1182,7 +1274,7 @@ static void test_transition_from_silence_fades_in_new_audio(void)
     call.iterations = AVERAGING_BUFFER_COUNT + MIN_MUSIC_DURATION_SECS * 1000 / ANALYSIS_STEP_MSECS - 1;
 
     run = capture_stdout_from_call(call_detection_loop, &call);
-    EXPECT_EQ_SIZE(sizeof(expected), run.output_size);
+    EXPECT_EQ_SIZE(0, run.output_size);
     if (run.output)
         EXPECT_MEMEQ(expected, run.output, sizeof(expected));
     EXPECT_EQ_INT(200, (int)state.samples_output_silenced);
@@ -1192,7 +1284,7 @@ static void test_transition_from_silence_fades_in_new_audio(void)
     free(run.output);
 }
 
-static void test_write_confirmed_audio_to_stdout_pass_and_silence(void)
+static void test_advance_confirmed_timeline_pass_and_news(void)
 {
     ProgramConfig config;
     AudioBuffers buffers = { 0 };
@@ -1218,7 +1310,7 @@ static void test_write_confirmed_audio_to_stdout_pass_and_silence(void)
     call.state = &state;
 
     run = capture_stdout_from_call(call_write_confirmed, &call);
-    EXPECT_EQ_SIZE(sizeof(main_output), run.output_size);
+    EXPECT_EQ_SIZE(0, run.output_size);
     if (run.output)
         EXPECT_MEMEQ(main_output, run.output, sizeof(main_output));
     EXPECT_EQ_INT(3, (int)state.samples_output_audible);
@@ -1235,7 +1327,7 @@ static void test_write_confirmed_audio_to_stdout_pass_and_silence(void)
     state.crossfade_buffer_len_samples = 2;
     state.current_audio_mode = AUDIO_MODE_MUSIC;
     run = capture_stdout_from_call(call_write_confirmed, &call);
-    EXPECT_EQ_SIZE(sizeof(zeros), run.output_size);
+    EXPECT_EQ_SIZE(0, run.output_size);
     if (run.output)
         EXPECT_MEMEQ(zeros, run.output, sizeof(zeros));
     EXPECT_EQ_INT(3, (int)state.samples_output_silenced);
@@ -1269,7 +1361,7 @@ static void test_write_confirmed_audio_keepalive(void)
     call.state = &state;
 
     run = capture_stdout_from_call(call_write_confirmed, &call);
-    EXPECT_EQ_SIZE(sizeof(main_output), run.output_size);
+    EXPECT_EQ_SIZE(0, run.output_size);
     EXPECT_EQ_INT(2, (int)state.samples_output_audible);
     EXPECT_EQ_INT(4, (int)state.samples_output_silenced);
     EXPECT_EQ_INT(0, state.main_output_buffer_idx);
@@ -1296,7 +1388,7 @@ static void test_flush_remaining_audio(void)
     call.state = &state;
 
     run = capture_stdout_from_call(call_flush_remaining, &call);
-    EXPECT_EQ_SIZE(sizeof(main_output), run.output_size);
+    EXPECT_EQ_SIZE(0, run.output_size);
     if (run.output)
         EXPECT_MEMEQ(main_output, run.output, sizeof(main_output));
     EXPECT_EQ_INT(2, (int)state.samples_output_audible);
@@ -1309,7 +1401,7 @@ static void test_flush_remaining_audio(void)
     state.main_output_buffer_idx = 2;
     state.current_audio_mode = AUDIO_MODE_TALK;
     run = capture_stdout_from_call(call_flush_remaining, &call);
-    EXPECT_EQ_SIZE(sizeof(zeros), run.output_size);
+    EXPECT_EQ_SIZE(0, run.output_size);
     if (run.output)
         EXPECT_MEMEQ(zeros, run.output, sizeof(zeros));
     EXPECT_EQ_INT(2, (int)state.samples_output_silenced);
@@ -1317,28 +1409,56 @@ static void test_flush_remaining_audio(void)
     free(run.output);
 }
 
-static void test_program_main_pass_all_mono_input(void)
+static void test_program_main_emits_no_audio(void)
 {
     int16_t input[] = { 1000, -1000, 3000, -3000 };
-    int16_t expected[] = {
-        1000, 1000,
-        -1000, -1000,
-        3000, 3000,
-        -3000, -3000
-    };
-    char arg0[] = "silencer";
+    char arg0[] = "news_identifier";
     char arg1[] = "-p";
     char arg2[] = "-q";
     char arg3[] = "-c1";
     char arg4[] = "-s11025";
     char *argv[] = { arg0, arg1, arg2, arg3, arg4 };
-    CapturedRun run = run_silencer_with_input(5, argv, input, 4, 1);
+    CapturedRun run = run_news_identifier_with_input(5, argv, input, 4, 1);
 
     EXPECT_EQ_INT(0, run.status);
-    EXPECT_EQ_SIZE(sizeof(expected), run.output_size);
-    if (run.output)
-        EXPECT_MEMEQ(expected, run.output, sizeof(expected));
+    EXPECT_EQ_SIZE(0, run.output_size);
     free(run.output);
+}
+
+static void call_report_news_transitions(void *context)
+{
+    NewsEventCall *call = (NewsEventCall *)context;
+
+    report_news_state(call->config, call->state, 1);
+    call->state->samples_output_audible = 12;
+    call->state->total_samples_processed = 12;
+    report_news_state(call->config, call->state, 0);
+    call->state->samples_output_audible = 360;
+    call->state->total_samples_processed = 382;
+    report_news_state(call->config, call->state, 0);
+}
+
+static void test_news_events_do_not_include_schedule_events(void)
+{
+    ProgramConfig config;
+    ProgramState state;
+    NewsEventCall call = { &config, &state };
+    char *events;
+
+    config = config_with_stream_time("2026-06-19T12:00:00Z", 0);
+    config.sample_rate = 1;
+    config.time_restricted_silence_enabled = 1;
+    memset(&state, 0, sizeof(state));
+    events = capture_stderr_from_call(call_report_news_transitions, &call);
+
+    EXPECT_TRUE(events != NULL);
+    if (events) {
+        EXPECT_STREQ(
+            "NEWS_EVENT news_on sample=0 delay_ms=0\n"
+            "NEWS_EVENT news_off sample=12 delay_ms=0\n",
+            events);
+    }
+    free(events);
 }
 
 int main(void)
@@ -1353,8 +1473,9 @@ int main(void)
     test_command_line_parsing_rejects_invalid_inputs();
     test_time_restricted_silence_window();
     test_should_silence_audio_mode_at_sample();
-    test_bypass_talk_silencing();
+    test_outside_news_schedule();
     test_fast_passthrough_gate();
+    test_fast_passthrough_emits_no_audio();
     test_fades();
     test_buffer_allocation_and_filter_initialization();
     test_populate_main_output_buffer_sample_modes();
@@ -1363,16 +1484,17 @@ int main(void)
     test_detection_confirmation_logic();
     test_transition_to_silence_fades_from_transition_point();
     test_transition_from_silence_fades_in_new_audio();
-    test_write_confirmed_audio_to_stdout_pass_and_silence();
+    test_advance_confirmed_timeline_pass_and_news();
     test_write_confirmed_audio_keepalive();
     test_flush_remaining_audio();
-    test_program_main_pass_all_mono_input();
+    test_program_main_emits_no_audio();
+    test_news_events_do_not_include_schedule_events();
 
     if (tests_failed) {
-        fprintf(stderr, "%d of %d silencer tests failed\n", tests_failed, tests_run);
+        fprintf(stderr, "%d of %d news identifier tests failed\n", tests_failed, tests_run);
         return 1;
     }
 
-    printf("All %d silencer tests passed\n", tests_run);
+    printf("All %d news identifier tests passed\n", tests_run);
     return 0;
 }

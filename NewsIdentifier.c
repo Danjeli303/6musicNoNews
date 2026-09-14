@@ -1,6 +1,6 @@
 ////////////////////////////////////////////////////////////////////////////
-//                           **** SILENCER ****                          //
-//             Selective Audio Detection and Silence Filter               //
+//                     **** NEWS IDENTIFIER ****                       //
+//                 Scheduled BBC News Event Detector                    //
 //                    Copyright (c) 2024 David Bryant.                    //
 //                          All Rights Reserved.                          //
 //      Distributed under the BSD Software License (see license.txt)      //
@@ -28,8 +28,8 @@
 
 #define VERSION         0.1
 
-// Output modes for debug views
-#define OUTPUT_AUDIO    0 // Normal audio passthrough/silencing
+// Internal analysis views retained for classifier diagnostics.
+#define OUTPUT_AUDIO    0 // Original audio view for internal analysis alignment
 #define OUTPUT_MONO     1 // Mono version of input
 #define OUTPUT_FILTERED 2 // Filtered mono audio used for analysis
 #define OUTPUT_LEVEL    3 // RMS level of the audio
@@ -47,35 +47,25 @@
 #define AUDIO_MODE_TALK       -1 // Talk is detected
 
 static const char *sign_on = "\n"
-" SILENCER  Time-Restricted Audio Detection and Silence Filter  Version %.1f\n"
+" NEWS IDENTIFIER  Scheduled BBC News Event Detector  Version %.1f\n"
 " Copyright (c) 2024 David Bryant. All Rights Reserved.\n\n";
 
 static const char *usage =
-" Usage:     SILENCER [-options] < SourceAudio.pcm > StereoOutput.pcm\n\n"
-" Operation: scan source audio (stdin) using tensor discrimination to filter\n"
-"            output (stdout), silencing either music (-m) or talk (-t);\n"
-"            or output raw scan analytics for use with TENSOR-GEN util (-a)\n\n"
+" Usage:     news_identifier [-options] < SourceAudio.pcm\n\n"
+" Operation: scan source PCM from stdin and emit schedule/news transition\n"
+"            events on stderr. No audio is written to stdout.\n\n"
 " Options:  -a <file.bin>    = output analysis results to specified file\n"
 "           -c<n>            = override default channel count of 2\n"
 "           -d <file.tensor> = specify alternate discrimination tensor file\n"
 "           -e               = schedule from monotonic CPU clock (live streams)\n"
-"           -k               = keep-alive crossfading for long silences\n"
-"           -l<n>            = left output override (for debug, n = 0-4:\n"
-"                            = 0=audio, 1=mono, 2=filtered, 3=level, 4=tensor)\n"
-"           -m[<n>]          = silence music, with optional threshold offset\n"
-"                            = (raise or lower music threshold +/- 99 points)\n"
-"           -n               = output only silence (silence everything)\n"
-"           -p               = pass all audio (no silencing, default)\n"
 "           -q               = no messaging except errors\n"
-"           -r<n>            = right output override (for debug, n = 0-4:\n"
-"                            = 0=audio, 1=mono, 2=filtered, 3=level, 4=tensor)\n"
 "           -s<n>            = override default sample rate of 44.1 kHz\n"
-"           -t[<n>]          = silence talk, with optional threshold offset\n"
+"           -t[<n>]          = identify talk, with optional threshold offset\n"
 "                            = (raise or lower talk threshold +/- 99 points)\n"
 "           -T <iso-time>    = stream start time (e.g. HLS PROGRAM-DATE-TIME)\n"
 "           -w<ranges|file>  = with -x, active minute ranges or INI schedule file\n"
 "                            = (default ranges: 58-5,28-35)\n"
-"           -x               = with -t, enables time-restricted talk silencing\n"
+"           -x               = with -t, restrict news events to the schedule\n"
 "           -v[<n>]          = set verbosity + [rate in seconds]\n"
 "           -z<+/-HH:MM>     = UTC offset for stream debug time display (e.g. +01:00)\n\n";
 
@@ -133,8 +123,8 @@ typedef struct {
     float   *mono_float_samples; // Buffer for mono, float, filtered samples for analysis
     float   *rms_level_ring_buffer; // Ring buffer for RMS level calculation
     float   *analysis_level_buffer; // Buffer storing levels over the analysis window duration
-    int16_t *main_output_buffer;  // Main buffer for audio to be written to stdout
-    int16_t *crossfade_buffer;  // Buffer used for crossfading audio segments
+    int16_t *main_output_buffer;  // Internal timeline buffer retained for transition alignment
+    int16_t *crossfade_buffer;  // Internal transition-alignment workspace
     Biquad  lowpass_filters[2]; // Lowpass filters (stereo for potential future use, currently mono applied)
     Biquad  highpass_filters[2]; // Highpass filters
 } AudioBuffers;
@@ -172,6 +162,7 @@ typedef struct {
     int64_t next_debug_stream_sample_report; // Next stream sample index for debug reporting
     int64_t fast_passthrough_samples;
     int fast_passthrough_active;
+    int news_event_state;
 } ProgramState;
 
 
@@ -213,10 +204,12 @@ static void write_delayed_passthrough_audio(const ProgramConfig *config, AudioBu
 static void process_input_chunk(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, int16_t* pcm_input_chunk, int num_input_samples_in_chunk);
 static void populate_main_output_buffer_sample(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state, const int16_t* current_input_sample_frame, float current_filtered_sample);
 static void perform_detection_and_handle_transitions(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state);
-static int should_bypass_talk_silencing_due_to_time_restriction(const ProgramConfig *config, const ProgramState *state);
+static int is_outside_news_schedule(const ProgramConfig *config, const ProgramState *state);
 static int is_time_restricted_silence_active_at_sample(const ProgramConfig *config, int64_t sample_index);
 static int should_silence_audio_mode_at_sample(const ProgramConfig *config, int audio_mode, int64_t sample_index);
-static void write_confirmed_audio_to_stdout(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state);
+static void report_segment_state(const ProgramConfig *config, ProgramState *state, int news_detected);
+static void report_news_state(const ProgramConfig *config, ProgramState *state, int news_detected);
+static void advance_confirmed_timeline(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state);
 static void flush_remaining_audio(ProgramConfig *config, AudioBuffers *buffers, ProgramState *state);
 static void print_summary_statistics(const ProgramConfig *config, const ProgramState *state);
 static void cleanup_resources(AudioBuffers *buffers);
@@ -274,7 +267,7 @@ int main (int argc, char **argv) {
     ProgramState state = {0}; // Initialize all fields to zero/NULL
 
     memset(&profile_stats, 0, sizeof(profile_stats));
-    profile_stats.enabled = profile_env_enabled("SILENCER_PROFILE");
+    profile_stats.enabled = profile_env_enabled("NEWS_IDENTIFIER_PROFILE");
     profile_stats.started_at = profile_now_seconds();
 
     initialize_program_config(&config);
@@ -286,8 +279,7 @@ int main (int argc, char **argv) {
     }
 
 #ifdef _WIN32
-    // Set stdin and stdout to binary mode on Windows
-    setmode (fileno (stdout), O_BINARY); 
+    // Set the PCM input to binary mode on Windows.
     setmode (fileno (stdin), O_BINARY); 
 #endif
 
@@ -326,6 +318,7 @@ int main (int argc, char **argv) {
     // Initialize ProgramState members not covered by {0} or allocate_audio_buffers
     state.dither_rng_state = 0x31415926; 
     state.current_audio_mode = AUDIO_MODE_NOTHING; 
+    state.news_event_state = 0;
 
     if (config.cpu_clock_schedule_enabled)
         config.schedule_clock_start_ms = monotonic_clock_ms();
@@ -334,6 +327,9 @@ int main (int argc, char **argv) {
 
     double flush_start = profile_stats.enabled ? profile_now_seconds() : 0.0;
     flush_remaining_audio(&config, &buffers, &state);
+    if (state.news_event_state)
+        fprintf(stderr, "NEWS_EVENT news_off sample=%lld delay_ms=0\n",
+                (long long)(state.samples_output_audible + state.samples_output_silenced));
     profile_add_seconds(&profile_stats.flush_seconds, flush_start);
     print_summary_statistics(&config, &state);
     print_profile_summary(&config, &state);
@@ -710,7 +706,7 @@ static void write_delayed_passthrough_audio(const ProgramConfig *config, AudioBu
     if (state->main_output_buffer_idx > delay_samples) {
         int samples_to_write = state->main_output_buffer_idx - delay_samples;
 
-        fwrite(buffers->main_output_buffer, sizeof(int16_t) * 2, samples_to_write, stdout);
+        report_segment_state(config, state, 0);
         state->samples_output_audible += samples_to_write;
         memmove(buffers->main_output_buffer, buffers->main_output_buffer + samples_to_write * 2,
                 (state->main_output_buffer_idx - samples_to_write) * sizeof(int16_t) * 2);
@@ -841,8 +837,8 @@ static void process_input_chunk(const ProgramConfig *config, AudioBuffers *buffe
             state->num_analysis_windows_done++; 
         }
         
-        // Write confirmed audio from main_output_buffer to stdout
-        write_confirmed_audio_to_stdout(config, buffers, state);
+        // Advance confirmed classifier segments and emit any state changes.
+        advance_confirmed_timeline(config, buffers, state);
     }
     profile_add_seconds(&profile_stats.process_seconds, process_start);
 }
@@ -989,7 +985,7 @@ static void perform_detection_and_handle_transitions(const ProgramConfig *config
 
         // --- Handle Confirmed Transition ---
         if (detected_audio_mode_this_step != AUDIO_MODE_NOTHING && detected_audio_mode_this_step != state->current_audio_mode) {
-            // Only perform full crossfade logic if we are actively silencing/passing
+            // Retain transition alignment from the original classifier pipeline.
             if (config->processing_mode == PROCESSING_MODE_SILENCE_MUSIC || config->processing_mode == PROCESSING_MODE_SILENCE_TALK) {
                 int64_t first_buffered_sample = state->total_samples_processed - state->main_output_buffer_idx;
                 int transition_offset_in_buffer = (int)(state->current_transition_sample_point - first_buffered_sample);
@@ -1008,13 +1004,13 @@ static void perform_detection_and_handle_transitions(const ProgramConfig *config
                     if (fade_out_start_idx_in_buffer >= 0 &&
                         fade_out_start_idx_in_buffer + state->crossfade_buffer_len_samples <= state->main_output_buffer_idx) {
                         // Write audible audio up to the actual transition, then fade to silence.
-                        fwrite(buffers->main_output_buffer, sizeof(int16_t) * 2, fade_out_start_idx_in_buffer, stdout);
+                        report_news_state(config, state, 0);
                         state->samples_output_audible += fade_out_start_idx_in_buffer;
                         
                         // Prepare and write the full fade-out span before entering silence.
                         memcpy(buffers->crossfade_buffer, buffers->main_output_buffer + fade_out_start_idx_in_buffer * 2, state->crossfade_buffer_len_samples * sizeof(int16_t) * 2);
                         fade_out(buffers->crossfade_buffer, state->crossfade_buffer_len_samples, 2); 
-                        fwrite(buffers->crossfade_buffer, sizeof(int16_t) * 2, state->crossfade_buffer_len_samples, stdout);
+                        report_news_state(config, state, 1);
                         state->samples_output_audible += state->crossfade_buffer_len_samples; 
                         
                         int samples_written_this_transition = fade_out_start_idx_in_buffer + state->crossfade_buffer_len_samples;
@@ -1024,7 +1020,7 @@ static void perform_detection_and_handle_transitions(const ProgramConfig *config
                         if (config->verbose_level > 0 && !config->quiet_mode) fprintf(stderr, "Fade OUT to SILENCE: wrote %d, faded %d. Output buffer now %.1fs\n", fade_out_start_idx_in_buffer, state->crossfade_buffer_len_samples, (float)state->main_output_buffer_idx / config->sample_rate);
                     } else {
                         if (config->verbose_level > 0 && !config->quiet_mode) fprintf(stderr, "Warning: Fade-out region out of bounds (idx %d, len %d, out_buf_idx %d). Mode switched directly.\n", fade_out_start_idx_in_buffer, state->crossfade_buffer_len_samples, state->main_output_buffer_idx);
-                        write_confirmed_audio_to_stdout(config, buffers, state);
+                        advance_confirmed_timeline(config, buffers, state);
                     }
                 } else {
                     int fade_in_start_idx_in_buffer = transition_offset_in_buffer;
@@ -1033,14 +1029,14 @@ static void perform_detection_and_handle_transitions(const ProgramConfig *config
                         fade_in_start_idx_in_buffer + state->crossfade_buffer_len_samples <= state->main_output_buffer_idx) {
                         // Write silence up to the start of the newly audible material.
                         for(int k = 0; k < fade_in_start_idx_in_buffer * 2; ++k) buffers->main_output_buffer[k] = 0;
-                        fwrite(buffers->main_output_buffer, sizeof(int16_t) * 2, fade_in_start_idx_in_buffer, stdout);
+                        report_news_state(config, state, 1);
                         state->samples_output_silenced += fade_in_start_idx_in_buffer;
 
                         // Fade the new audible segment up from silence.
                         int16_t* new_audible_segment_start = buffers->main_output_buffer + fade_in_start_idx_in_buffer * 2;
                         fade_in(new_audible_segment_start, state->crossfade_buffer_len_samples, 2);
 
-                        fwrite(new_audible_segment_start, sizeof(int16_t) * 2, state->crossfade_buffer_len_samples, stdout);
+                        report_news_state(config, state, 0);
                         state->samples_output_audible += state->crossfade_buffer_len_samples;
 
                         int samples_written_this_transition = fade_in_start_idx_in_buffer + state->crossfade_buffer_len_samples;
@@ -1051,10 +1047,10 @@ static void perform_detection_and_handle_transitions(const ProgramConfig *config
                         if (!config->quiet_mode) fprintf (stderr, "Crossfade to %s at %i:%i\n", detected_audio_mode_this_step == AUDIO_MODE_MUSIC ? "MUSIC" : "TALK", MINS (state->samples_output_audible + state->samples_output_silenced, config->sample_rate), SECS (state->samples_output_audible + state->samples_output_silenced, config->sample_rate));
                     } else {
                         if (config->verbose_level > 0 && !config->quiet_mode) fprintf(stderr, "Warning: Fade-in region out of bounds (idx %d, len %d, out_buf_idx %d). Mode switched directly.\n", fade_in_start_idx_in_buffer, state->crossfade_buffer_len_samples, state->main_output_buffer_idx);
-                        write_confirmed_audio_to_stdout(config, buffers, state);
+                        advance_confirmed_timeline(config, buffers, state);
                     }
                 }
-            } else if (!config->quiet_mode) { // Not actively silencing (e.g. -p mode), just log detection
+            } else if (!config->quiet_mode) {
                  fprintf (stderr, "%i:%i: detected %s starting at %i:%i\n",
                      MINS (state->total_samples_processed, config->sample_rate), SECS (state->total_samples_processed, config->sample_rate), 
                      detected_audio_mode_this_step == AUDIO_MODE_MUSIC ? "MUSIC" : " TALK",
@@ -1080,10 +1076,8 @@ static void perform_detection_and_handle_transitions(const ProgramConfig *config
     } // End of AVERAGING_BUFFER_COUNT block
 }
 
-// Checks if talk silencing should be bypassed due to time restrictions when -t and -x are active.
-// Returns 1 if talk silencing SHOULD BE BYPASSED (i.e., time is outside active windows).
-// Returns 0 if talk silencing SHOULD BE APPLIED (i.e., -t -x not active, or time is within active windows).
-static int should_bypass_talk_silencing_due_to_time_restriction(const ProgramConfig *config, const ProgramState *state) {
+// Return true when -t -x is active and the confirmed segment is outside the schedule.
+static int is_outside_news_schedule(const ProgramConfig *config, const ProgramState *state) {
     // This function is only relevant if -t (silence talk) and -x (time-restricted) are both set.
     if (!(config->processing_mode == PROCESSING_MODE_SILENCE_TALK && config->time_restricted_silence_enabled)) {
         return 0; // Not in -t -x mode, so no bypassing based on time. Normal -t logic applies.
@@ -1123,9 +1117,35 @@ static int should_silence_audio_mode_at_sample(const ProgramConfig *config, int 
     return 0;
 }
 
+static void report_news_state(const ProgramConfig *config, ProgramState *state, int news_detected) {
+    int64_t output_sample = state->samples_output_audible + state->samples_output_silenced;
+    int schedule_active = !config->time_restricted_silence_enabled ||
+        is_time_restricted_silence_active_at_sample(
+            config, scheduled_sample_index(config, state, output_sample));
 
-// Writes confirmed audio segments from the main_output_buffer to stdout.
-static void write_confirmed_audio_to_stdout(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state) {
+    if ((!schedule_active || !news_detected) && state->news_event_state) {
+        state->news_event_state = 0;
+        fprintf(stderr, "NEWS_EVENT news_off sample=%lld delay_ms=0\n",
+                (long long)output_sample);
+        fflush(stderr);
+        return;
+    }
+
+    if (news_detected && schedule_active && !state->news_event_state) {
+        state->news_event_state = 1;
+        fprintf(stderr, "NEWS_EVENT news_on sample=%lld delay_ms=0\n",
+                (long long)output_sample);
+    }
+    fflush(stderr);
+}
+
+static void report_segment_state(const ProgramConfig *config, ProgramState *state,
+                                 int news_detected) {
+    report_news_state(config, state, news_detected);
+}
+
+// Advances confirmed segments without producing an audio stream.
+static void advance_confirmed_timeline(const ProgramConfig *config, AudioBuffers *buffers, ProgramState *state) {
     int64_t samples_in_output_buffer_before_current_input = state->total_samples_processed - state->main_output_buffer_idx;
     int samples_to_write_now = 0;
     
@@ -1150,10 +1170,10 @@ static void write_confirmed_audio_to_stdout(const ProgramConfig *config, AudioBu
         if (config->processing_mode == PROCESSING_MODE_SILENCE_ALL) { 
             should_pass_audio_audible = 0;
         } else if (config->processing_mode == PROCESSING_MODE_SILENCE_TALK) { 
-            if (config->time_restricted_silence_enabled && should_bypass_talk_silencing_due_to_time_restriction(config, state)) {
-                should_pass_audio_audible = 1; // -t -x active, but time condition bypasses silencing talk
+            if (config->time_restricted_silence_enabled && is_outside_news_schedule(config, state)) {
+                should_pass_audio_audible = 1; // Outside the scheduled-news window.
             } else {
-                // Normal -t logic (or -t -x active AND time condition met for silencing)
+                // Inside the active window, talk represents scheduled news.
                 should_pass_audio_audible = (state->current_audio_mode == AUDIO_MODE_MUSIC); // Pass if music, silence if talk
             }
         } else if (config->processing_mode == PROCESSING_MODE_SILENCE_MUSIC) { 
@@ -1175,7 +1195,7 @@ static void write_confirmed_audio_to_stdout(const ProgramConfig *config, AudioBu
             // Part 1: Silence before keep-alive
             if (part1_len > 0) {
                 for (int k = 0; k < part1_len * 2; ++k) buffers->main_output_buffer[k] = 0;
-                fwrite(buffers->main_output_buffer, sizeof(int16_t) * 2, part1_len, stdout);
+                report_segment_state(config, state, 1);
                 state->samples_output_silenced += part1_len;
             }
 
@@ -1186,7 +1206,7 @@ static void write_confirmed_audio_to_stdout(const ProgramConfig *config, AudioBu
 
                 for (int k = 0; k < keepalive_len * 2; ++k) temp_keepalive_blip[k] = keepalive_src_ptr[k] >> 2; // Attenuate
                 fade_in(temp_keepalive_blip, keepalive_len, 2); 
-                fwrite(temp_keepalive_blip, sizeof(int16_t) * 2, keepalive_len, stdout); 
+                report_segment_state(config, state, 1);
                 state->samples_output_audible += keepalive_len; // Keep-alive blip counts as "audible"
 
                 // Update crossfade_buffer with the tail of this keep-alive blip for the *next* transition
@@ -1204,16 +1224,14 @@ static void write_confirmed_audio_to_stdout(const ProgramConfig *config, AudioBu
             if (part2_len > 0) {
                 int16_t *part2_src_ptr = buffers->main_output_buffer + (part1_len + keepalive_len) * 2;
                 for (int k = 0; k < part2_len * 2; ++k) part2_src_ptr[k] = 0;
-                fwrite(part2_src_ptr, sizeof(int16_t) * 2, part2_len, stdout);
+                report_segment_state(config, state, 1);
                 state->samples_output_silenced += part2_len;
             }
             
         } else { // Normal write (either pass audio or fully silence it)
             if (!should_pass_audio_audible) { // Silence this segment
                 for (int k = 0; k < samples_to_write_now * 2; ++k) buffers->main_output_buffer[k] = 0;
-                state->samples_output_silenced += samples_to_write_now;
             } else { // Pass audio as is
-                state->samples_output_audible += samples_to_write_now;
                 // Prepare crossfade_buffer with the tail of this audible segment for the next transition
                 if (samples_to_write_now >= state->crossfade_buffer_len_samples) {
                     memcpy(buffers->crossfade_buffer, buffers->main_output_buffer + (samples_to_write_now - state->crossfade_buffer_len_samples) * 2, state->crossfade_buffer_len_samples * sizeof(int16_t) * 2);
@@ -1223,7 +1241,11 @@ static void write_confirmed_audio_to_stdout(const ProgramConfig *config, AudioBu
                 }
                 fade_out(buffers->crossfade_buffer, state->crossfade_buffer_len_samples, 2); 
             }
-            fwrite (buffers->main_output_buffer, sizeof (int16_t) * 2, samples_to_write_now, stdout); 
+            report_segment_state(config, state, !should_pass_audio_audible);
+            if (should_pass_audio_audible)
+                state->samples_output_audible += samples_to_write_now;
+            else
+                state->samples_output_silenced += samples_to_write_now;
         }
 
         // Shift main_output_buffer
@@ -1248,7 +1270,7 @@ static void flush_remaining_audio(ProgramConfig *config, AudioBuffers *buffers, 
         if (config->processing_mode == PROCESSING_MODE_SILENCE_ALL) { 
             should_pass_audio_audible = 0;
         } else if (config->processing_mode == PROCESSING_MODE_SILENCE_TALK) { 
-            if (config->time_restricted_silence_enabled && should_bypass_talk_silencing_due_to_time_restriction(config, state)) {
+            if (config->time_restricted_silence_enabled && is_outside_news_schedule(config, state)) {
                 should_pass_audio_audible = 1; // Bypassed due to time restriction
             } else {
                 should_pass_audio_audible = (state->current_audio_mode == AUDIO_MODE_MUSIC); 
@@ -1260,13 +1282,16 @@ static void flush_remaining_audio(ProgramConfig *config, AudioBuffers *buffers, 
 
         if (!should_pass_audio_audible) { // Silence remaining segment
             for (int k = 0; k < state->main_output_buffer_idx * 2; ++k) buffers->main_output_buffer[k] = 0;
-            state->samples_output_silenced += state->main_output_buffer_idx; 
-        } else {
-            state->samples_output_audible += state->main_output_buffer_idx; 
         }
-        fwrite(buffers->main_output_buffer, sizeof(int16_t) * 2, state->main_output_buffer_idx, stdout); 
-        if (config->verbose_level > 0 && !config->quiet_mode) fprintf(stderr, "Final flush: %s %d samples (%.1f secs)\n",
-            should_pass_audio_audible ? "Passed" : "Silenced", state->main_output_buffer_idx, (float)state->main_output_buffer_idx / config->sample_rate); 
+        report_segment_state(config, state, !should_pass_audio_audible);
+        if (should_pass_audio_audible)
+            state->samples_output_audible += state->main_output_buffer_idx;
+        else
+            state->samples_output_silenced += state->main_output_buffer_idx;
+        if (config->verbose_level > 0 && !config->quiet_mode)
+            fprintf(stderr, "Final analysis flush: %d samples (%.1f secs)\n",
+                    state->main_output_buffer_idx,
+                    (float)state->main_output_buffer_idx / config->sample_rate);
         state->main_output_buffer_idx = 0;
     }
 }
@@ -1287,12 +1312,7 @@ static void print_summary_statistics(const ProgramConfig *config, const ProgramS
             state->num_analysis_windows_done - state->raw_music_hits - state->raw_talk_hits, 
             state->num_analysis_windows_done ? (state->num_analysis_windows_done - state->raw_music_hits - state->raw_talk_hits) * 100.0 / state->num_analysis_windows_done : 0.0); 
     
-    int64_t total_output_duration_samples = state->samples_output_audible + state->samples_output_silenced;
-    fprintf(stderr, "Audio passed audible = %i:%i (%.1f%%), audio silenced = %i:%i (%.1f%%)\n\n",
-             MINS(state->samples_output_audible, config->sample_rate), SECS(state->samples_output_audible, config->sample_rate), 
-             total_output_duration_samples ? state->samples_output_audible * 100.0 / total_output_duration_samples : 0.0,
-             MINS(state->samples_output_silenced, config->sample_rate), SECS(state->samples_output_silenced, config->sample_rate), 
-             total_output_duration_samples ? state->samples_output_silenced * 100.0 / total_output_duration_samples : 0.0); 
+    fprintf(stderr, "\n");
 
     if (analysis_binary_output_file) { 
         display_analysis_results(); 
@@ -1366,9 +1386,10 @@ static int analyze_window (float *levels, long current_total_samples, int num_sa
     double sqrt_peak_trough_ratio = (peak_level > trough_level && trough_level > 0) ? sqrt(peak_level / trough_level) : 1.0; 
     double cbrt_peak_trough_ratio = (peak_level > trough_level && trough_level > 0) ? cbrt(peak_level / trough_level) : 1.0; 
 
-    features.range_dB = (int)floor(dynamic_range_db + 0.5); 
-    if (features.range_dB >= 96) features.range_dB = 95; // Clamp to histogram size
-    if (features.range_dB < 0) features.range_dB = 0;
+    int range_db = (int)floor(dynamic_range_db + 0.5);
+    if (range_db < 0) range_db = 0;
+    if (range_db >= 96) range_db = 95; // Clamp to histogram size
+    features.range_dB = (unsigned char)range_db;
 
 
     float prev_cycle_peak = levels[0], prev_cycle_trough = levels[0]; 

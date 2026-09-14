@@ -7,6 +7,10 @@
 *.tmp
 
 /bin2c
+/news_identifier
+/news_identifier_tests
+/news_mixer_control
+/news_mixer_control_tests
 /silencer
 /silencer_tests
 /skipper
