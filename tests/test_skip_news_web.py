@@ -710,6 +710,7 @@ class DeploymentTests(unittest.TestCase):
     def test_page_uses_simple_live_process_programmes_order(self):
         html = (ROOT / "web/index.html").read_text(encoding="utf-8")
         app = (ROOT / "web/app.js").read_text(encoding="utf-8")
+        styles = (ROOT / "web/styles.css").read_text(encoding="utf-8")
 
         self.assertLess(html.index('id="live-stream"'), html.index('id="process"'))
         self.assertLess(html.index('id="process"'), html.index('id="programmes"'))
@@ -732,6 +733,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn("programme-option-date", app)
         self.assertIn('year: "2-digit"', app)
         self.assertIn("show-track-favourite", app)
+        self.assertIn("repeat(auto-fill, minmax(min(100%, 210px), 250px))", styles)
 
     def test_caddy_routes_hls_and_web_on_the_same_host(self):
         caddyfile = (ROOT / "docker/caddy/Caddyfile").read_text(encoding="utf-8")

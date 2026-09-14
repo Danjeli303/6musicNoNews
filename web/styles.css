@@ -237,7 +237,12 @@ button:disabled { cursor: wait; opacity: 0.65; }
 }
 
 .selected-tracklist-status { min-height: 1.2em; margin: 8px 0 18px; color: #ddd; font-size: 0.78rem; }
-.music-played-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.music-played-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 250px));
+  justify-content: start;
+  gap: 12px;
+}
 .music-played-grid .offline-now-playing { margin: 0; }
 .show-track-favourite { width: 38px; height: 38px; font-size: 1.35rem; }
 
@@ -969,7 +974,6 @@ main section { scroll-margin-top: 88px; }
   nav a { white-space: nowrap; padding: 0 11px; font-size: 0.82rem; }
   h1 { font-size: clamp(2.7rem, 14vw, 4.4rem); }
   .input-row { grid-template-columns: 1fr; box-shadow: none; }
-  .music-played-grid { grid-template-columns: 1fr; }
   input { border-right: 3px solid #fff; }
   button { min-height: 58px; }
   .header-radio-toggle, .favourite-button.header-favourite { min-height: 0; }
