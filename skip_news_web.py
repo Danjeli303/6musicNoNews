@@ -62,8 +62,10 @@ BBC_NOW_PLAYING_URL = (
     "https://rms.api.bbc.co.uk/v2/services/bbc_6music/segments/latest"
     "?experience=domestic&offset=0&limit=4"
 )
+BBC_6MUSIC_SCHEDULE_URL = "https://www.bbc.co.uk/sounds/schedules/bbc_6music"
 BBC_IMAGE_HOST = "ichef.bbci.co.uk"
 DEFAULT_NOW_PLAYING_DELAY_SECONDS = 18
+DEFAULT_SCHEDULE_CACHE_SECONDS = 3600
 MAX_ACTIVE_JOBS = 5
 NOW_PLAYING_FETCH_ERRORS = (OSError, HTTPException, UnicodeError, ValueError)
 
@@ -86,7 +88,9 @@ def _bbc_image_url(value):
     parsed = urlsplit(value)
     if parsed.scheme != "https" or parsed.hostname != BBC_IMAGE_HOST:
         return None
-    return value.replace("{recipe}", "640x640")
+    return value.replace("{recipe}", "640x640").replace(
+        "/images/ic/192xn/", "/images/ic/640x640/"
+    )
 
 
 def bbc_now_playing_from_payload(payload):
@@ -283,6 +287,155 @@ class FavouriteStore:
             if removed:
                 self._save()
         return removed
+
+
+def get_iplayer_schedule_from_output(output):
+    """Parse machine-delimited BBC 6 Music schedule rows from get_iplayer."""
+    programmes = []
+    for line in output.splitlines():
+        if not line.startswith("SKIPPER|||"):
+            continue
+        parts = line.split("|||", 7)
+        if len(parts) != 8:
+            continue
+        _, pid, title, subtitle, available, duration, image_url, web_url = parts
+        try:
+            start = datetime.fromisoformat(available).astimezone(timezone.utc)
+            duration_seconds = int(duration)
+        except (TypeError, ValueError):
+            continue
+        if not PID_PATTERN.fullmatch(pid) or duration_seconds < 1:
+            continue
+        end = start.timestamp() + duration_seconds
+        programmes.append(
+            {
+                "available": True,
+                "pid": pid,
+                "title": _clean_text(title) or "BBC Radio 6 Music",
+                "subtitle": _clean_text(subtitle) or "",
+                "presenter": _clean_text(title) or "BBC Radio 6 Music",
+                "image_url": _bbc_image_url(image_url),
+                "start_time": start.isoformat(),
+                "end_time": datetime.fromtimestamp(end, timezone.utc).isoformat(),
+                "start_timestamp": start.timestamp(),
+                "end_timestamp": end,
+                "url": _clean_text(web_url, limit=1000) or "",
+                "schedule_url": BBC_6MUSIC_SCHEDULE_URL,
+            }
+        )
+    return programmes
+
+
+def current_schedule_programme(programmes, at=None):
+    """Select the schedule entry which contains the supplied UTC instant."""
+    timestamp = (at or datetime.now(timezone.utc)).timestamp()
+    current = next(
+        (
+            programme
+            for programme in programmes
+            if programme["start_timestamp"] <= timestamp < programme["end_timestamp"]
+        ),
+        None,
+    )
+    inferred = False
+    if current is None:
+        previous = [
+            programme
+            for programme in programmes
+            if programme["start_timestamp"] <= timestamp
+        ]
+        candidate = max(previous, key=lambda item: item["start_timestamp"], default=None)
+        if candidate and timestamp - candidate["end_timestamp"] <= 3600:
+            current = candidate
+            inferred = True
+    if current is None:
+        return {"available": False, "schedule_url": BBC_6MUSIC_SCHEDULE_URL}
+    result = {
+        key: value
+        for key, value in current.items()
+        if key not in {"start_timestamp", "end_timestamp"}
+    }
+    result["schedule_inferred"] = inferred
+    return result
+
+
+class BBCScheduleService:
+    """Refresh and cache the BBC Radio 6 Music schedule using get_iplayer."""
+
+    LIST_FORMAT = (
+        "SKIPPER|||<pid>|||<name>|||<episode>|||<available>|||"
+        "<duration>|||<thumbnail>|||<web>"
+    )
+
+    def __init__(
+        self,
+        profile_dir,
+        executable="get_iplayer",
+        cache_seconds=DEFAULT_SCHEDULE_CACHE_SECONDS,
+    ):
+        self.profile_dir = Path(profile_dir).resolve()
+        self.executable = executable
+        self.cache_seconds = cache_seconds
+        self.lock = threading.Lock()
+        self.programmes = []
+        self.cached_at = 0.0
+
+    def _run(self, arguments, timeout):
+        result = subprocess.run(
+            [self.executable, f"--profile-dir={self.profile_dir}", *arguments],
+            cwd=str(BASE_DIR),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError("get_iplayer could not update the 6 Music schedule.")
+        return result.stdout
+
+    def _refresh(self):
+        self.profile_dir.mkdir(parents=True, exist_ok=True)
+        self._run(
+            [
+                "--type=radio",
+                "--refresh",
+                "--refresh-future",
+                "--refresh-exclude-groups-radio=national,regional,local",
+                "--refresh-include=BBC Radio 6 Music",
+                "--refresh-limit-radio=1",
+            ],
+            timeout=120,
+        )
+        output = self._run(
+            [
+                "--type=radio",
+                "--future",
+                "--channel=BBC Radio 6 Music",
+                "--pagesize=500",
+                f"--listformat={self.LIST_FORMAT}",
+                ".*",
+            ],
+            timeout=30,
+        )
+        programmes = get_iplayer_schedule_from_output(output)
+        if not programmes:
+            raise RuntimeError("get_iplayer returned an empty 6 Music schedule.")
+        return programmes
+
+    def get(self, at=None):
+        with self.lock:
+            now = time.monotonic()
+            if not self.programmes or now - self.cached_at >= self.cache_seconds:
+                try:
+                    self.programmes = self._refresh()
+                except (OSError, RuntimeError, subprocess.SubprocessError):
+                    if not self.programmes:
+                        raise
+                finally:
+                    self.cached_at = now
+            return current_schedule_programme(self.programmes, at=at)
 
 
 def now_playing_delay_seconds(value):
@@ -1099,15 +1252,27 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
             try:
                 payload = self.server.now_playing_service.get()
             except NOW_PLAYING_FETCH_ERRORS:
-                self._send_json(
-                    HTTPStatus.BAD_GATEWAY,
-                    {"error": "BBC 6 Music track information is unavailable."},
+                payload = {"available": False, "now_playing": False}
+            try:
+                programme = self.server.schedule_service.get()
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                programme = {
+                    "available": False,
+                    "schedule_url": BBC_6MUSIC_SCHEDULE_URL,
+                }
+            payload["show"] = programme
+            if programme.get("available"):
+                payload.update(
+                    {
+                        "programme_pid": programme["pid"],
+                        "programme": programme["title"],
+                        "programme_subtitle": programme["subtitle"],
+                        "presenter": programme["presenter"],
+                        "programme_image_url": programme["image_url"],
+                    }
                 )
-            else:
-                payload["display_delay_seconds"] = (
-                    self.server.now_playing_delay_seconds
-                )
-                self._send_json(HTTPStatus.OK, payload)
+            payload["display_delay_seconds"] = self.server.now_playing_delay_seconds
+            self._send_json(HTTPStatus.OK, payload)
         elif path == "/api/favourites":
             self._send_json(HTTPStatus.OK, self.server.favourite_store.list())
         elif path.startswith("/api/jobs/"):
@@ -1207,6 +1372,10 @@ class SkipNewsServer(ThreadingHTTPServer):
         )
         self.now_playing_service = BBCNowPlayingService(
             os.environ.get("BBC_NOW_PLAYING_URL", BBC_NOW_PLAYING_URL)
+        )
+        self.schedule_service = BBCScheduleService(
+            job_store.output_dir / ".get_iplayer_schedule",
+            executable=os.environ.get("GET_IPLAYER", "get_iplayer"),
         )
         self.now_playing_delay_seconds = now_playing_delay_seconds(
             os.environ.get(

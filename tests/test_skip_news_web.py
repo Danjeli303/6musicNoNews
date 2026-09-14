@@ -267,6 +267,60 @@ class NowPlayingTests(unittest.TestCase):
         )
 
 
+class ScheduleTests(unittest.TestCase):
+    OUTPUT = (
+        "SKIPPER|||m00318j6|||Nick Grimshaw|||Guests, chat and really good songs|||"
+        "2026-09-14T09:00:00+00:00|||10800|||"
+        "https://ichef.bbci.co.uk/images/ic/192xn/p0m53m3f.jpg|||"
+        "https://www.bbc.co.uk/programmes/m00318j6\n"
+        "SKIPPER|||m00318j8|||Lauren Laverne|||Words from Gemma Cairney|||"
+        "2026-09-14T12:00:00+00:00|||10800|||"
+        "https://ichef.bbci.co.uk/images/ic/192xn/p0m53ld7.jpg|||"
+        "https://www.bbc.co.uk/programmes/m00318j8\n"
+    )
+
+    def test_selects_current_programme_from_get_iplayer_schedule(self):
+        programmes = skip_news_web.get_iplayer_schedule_from_output(self.OUTPUT)
+        current = skip_news_web.current_schedule_programme(
+            programmes,
+            at=skip_news_web.datetime.fromisoformat("2026-09-14T10:30:00+00:00"),
+        )
+
+        self.assertEqual(current["pid"], "m00318j6")
+        self.assertEqual(current["title"], "Nick Grimshaw")
+        self.assertEqual(current["subtitle"], "Guests, chat and really good songs")
+        self.assertEqual(
+            current["image_url"],
+            "https://ichef.bbci.co.uk/images/ic/640x640/p0m53m3f.jpg",
+        )
+        self.assertNotIn("start_timestamp", current)
+
+    def test_schedule_service_refreshes_at_most_once_per_hour(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            service = skip_news_web.BBCScheduleService(output_dir)
+            calls = []
+
+            def refresh():
+                calls.append(True)
+                return skip_news_web.get_iplayer_schedule_from_output(self.OUTPUT)
+
+            service._refresh = refresh
+            at = skip_news_web.datetime.fromisoformat("2026-09-14T10:30:00+00:00")
+            self.assertTrue(service.get(at=at)["available"])
+            self.assertTrue(service.get(at=at)["available"])
+            self.assertEqual(len(calls), 1)
+
+    def test_bridges_a_short_gap_in_get_iplayer_schedule(self):
+        programmes = skip_news_web.get_iplayer_schedule_from_output(self.OUTPUT)
+        current = skip_news_web.current_schedule_programme(
+            programmes,
+            at=skip_news_web.datetime.fromisoformat("2026-09-14T15:30:00+00:00"),
+        )
+
+        self.assertEqual(current["title"], "Lauren Laverne")
+        self.assertTrue(current["schedule_inferred"])
+
+
 class WrapperTests(unittest.TestCase):
     @staticmethod
     def _write_executable(path, body):
@@ -589,6 +643,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('id="now-playing-title"', html)
         self.assertIn('id="live-now-playing-title"', html)
         self.assertIn('id="live-now-playing-favourite"', html)
+        self.assertIn('id="live-programme-image"', html)
         self.assertIn('fetch("/api/now-playing"', app)
         self.assertIn("setInterval(loadNowPlaying, 5000)", app)
         self.assertIn("display_delay_seconds", app)
@@ -598,6 +653,8 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn("navigator.mediaSession.setPositionState", app)
         self.assertIn("activeMediaPlayer === radioPlayer", app)
         self.assertIn("renderHeaderHistory(entry", app)
+        self.assertIn("renderHeaderProgramme(currentLiveProgramme)", app)
+        self.assertIn("radioStatus.textContent = liveProgrammeStatus()", app)
         self.assertIn(
             ".history-player-wrap .video-js.vjs-layout-tiny .vjs-progress-control",
             styles,
