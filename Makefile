@@ -29,8 +29,8 @@ bin2c: bin2c.c
 news_identifier: biquad.c lzwlib.c skipper.h biquad.h lzwlib.h 4d-tensor.h $(skipper_common_headers) $(skipper_common) NewsIdentifier.c
 	$(CC) $(CFLAGS) NewsIdentifier.c biquad.c lzwlib.c $(skipper_common) $(OPTFLAGS) -lm -o news_identifier
 
-ZMQ_CFLAGS ?= $(shell if command -v pkg-config >/dev/null 2>&1; then pkg-config --cflags libzmq; elif command -v brew >/dev/null 2>&1; then printf -- '-I%s/include' "$$(brew --prefix zeromq)"; fi)
-ZMQ_LIBS ?= $(shell if command -v pkg-config >/dev/null 2>&1; then pkg-config --libs libzmq; elif command -v brew >/dev/null 2>&1; then printf -- '-L%s/lib -lzmq' "$$(brew --prefix zeromq)"; else printf -- '-lzmq'; fi)
+ZMQ_CFLAGS ?= $(shell if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists libzmq; then pkg-config --cflags libzmq; elif command -v brew >/dev/null 2>&1; then printf -- '-I%s/include' "$$(brew --prefix zeromq)"; fi)
+ZMQ_LIBS ?= $(shell if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists libzmq; then pkg-config --libs libzmq; elif command -v brew >/dev/null 2>&1; then printf -- '-L%s/lib -lzmq' "$$(brew --prefix zeromq)"; else printf -- '-lzmq'; fi)
 
 news_mixer_control: news_mixer_control.c
 	$(CC) $(CFLAGS) $(ZMQ_CFLAGS) news_mixer_control.c $(OPTFLAGS) $(ZMQ_LIBS) -o news_mixer_control

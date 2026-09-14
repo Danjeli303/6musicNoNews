@@ -1403,9 +1403,10 @@ static int analyze_window (float *levels, long current_total_samples, int num_sa
     double sqrt_peak_trough_ratio = (peak_level > trough_level && trough_level > 0) ? sqrt(peak_level / trough_level) : 1.0; 
     double cbrt_peak_trough_ratio = (peak_level > trough_level && trough_level > 0) ? cbrt(peak_level / trough_level) : 1.0; 
 
-    features.range_dB = (int)floor(dynamic_range_db + 0.5); 
-    if (features.range_dB >= 96) features.range_dB = 95; // Clamp to histogram size
-    if (features.range_dB < 0) features.range_dB = 0;
+    int range_db = (int)floor(dynamic_range_db + 0.5);
+    if (range_db < 0) range_db = 0;
+    if (range_db >= 96) range_db = 95; // Clamp to histogram size
+    features.range_dB = (unsigned char)range_db;
 
 
     float prev_cycle_peak = levels[0], prev_cycle_trough = levels[0]; 
