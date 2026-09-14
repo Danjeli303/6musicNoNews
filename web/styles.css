@@ -226,6 +226,7 @@ button:disabled { cursor: wait; opacity: 0.65; }
 
 .selected-tracklist {
   grid-column: 1 / -1;
+  container-type: inline-size;
   padding-top: 28px;
   border-top: 1px solid rgba(255, 255, 255, 0.35);
 }
@@ -239,15 +240,23 @@ button:disabled { cursor: wait; opacity: 0.65; }
 .selected-tracklist-status { min-height: 1.2em; margin: 8px 0 18px; color: #ddd; font-size: 0.78rem; }
 .music-played-grid {
   display: grid;
-  grid-template-columns: repeat(
-    auto-fill,
-    minmax(min(210px, calc(50% - 6px)), 250px)
-  );
-  justify-content: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 .music-played-grid .offline-now-playing { margin: 0; }
 .show-track-favourite { width: 38px; height: 38px; font-size: 1.35rem; }
+
+@container (min-width: 513px) {
+  .music-played-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@container (min-width: 775px) {
+  .music-played-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+@container (min-width: 1037px) {
+  .music-played-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+}
 
 .job-card {
   margin-bottom: 52px;

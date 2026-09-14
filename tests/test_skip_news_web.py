@@ -733,7 +733,11 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn("programme-option-date", app)
         self.assertIn('year: "2-digit"', app)
         self.assertIn("show-track-favourite", app)
-        self.assertIn("minmax(min(210px, calc(50% - 6px)), 250px)", styles)
+        self.assertIn("repeat(2, minmax(0, 1fr))", styles)
+        self.assertIn("@container (min-width: 513px)", styles)
+        self.assertIn("repeat(3, minmax(0, 1fr))", styles)
+        self.assertIn("repeat(4, minmax(0, 1fr))", styles)
+        self.assertIn("repeat(5, minmax(0, 1fr))", styles)
 
     def test_caddy_routes_hls_and_web_on_the_same_host(self):
         caddyfile = (ROOT / "docker/caddy/Caddyfile").read_text(encoding="utf-8")
