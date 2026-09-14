@@ -299,7 +299,6 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
   flex: 1 1 390px;
   gap: 10px;
   align-items: center;
-  margin-left: auto;
 }
 
 .header-artwork {
@@ -413,6 +412,33 @@ pre { max-height: 190px; overflow: auto; white-space: pre-wrap; color: #c9c9c9; 
 .favourite-button:hover { color: #fff; background: #4a1000; border-color: var(--sounds-light); }
 .favourite-button.is-favourite { color: var(--sounds-light); border-color: var(--sounds-light); }
 .favourite-button:disabled { cursor: default; opacity: 0.35; }
+
+.now-playing {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  margin-bottom: 22px;
+}
+
+.now-playing-artwork {
+  width: 76px;
+  height: 76px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  color: var(--sounds-light);
+  background: #2a0600;
+}
+
+.now-playing-artwork img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.now-playing-artwork span { font-size: 2.8rem; font-weight: 800; line-height: 1; letter-spacing: -0.08em; }
+.now-playing-copy { min-width: 0; }
+.now-playing-copy p { margin: 0 0 5px; color: var(--sounds-light); font-size: 0.65rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
+.now-playing-copy .track-search-link,
+.now-playing-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.now-playing-copy .track-search-link { color: #fff; font-size: clamp(1rem, 2vw, 1.25rem); font-weight: 800; line-height: 1.15; text-decoration: none; }
+.now-playing-copy span { margin-top: 6px; color: #bdbdbd; font-size: 0.82rem; }
 
 main section { scroll-margin-top: 88px; }
 
@@ -853,7 +879,7 @@ main section { scroll-margin-top: 88px; }
 @media (max-width: 820px) {
   .sounds-inner { gap: 12px; }
   .header-now-playing { flex: 0 0 auto; }
-  .header-track-copy, .header-favourite { display: none; }
+  .header-track-copy { display: none; }
   nav { min-width: 0; flex: 1 1 auto; overflow-x: auto; }
   nav a { padding: 0 14px; white-space: nowrap; }
   .live-section, .process-section { grid-template-columns: 1fr; }

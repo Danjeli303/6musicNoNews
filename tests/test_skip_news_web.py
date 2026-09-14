@@ -555,6 +555,8 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn("autoplay: false", app)
         self.assertNotIn("<audio autoplay", html)
         self.assertIn('id="now-playing-title"', html)
+        self.assertIn('id="live-now-playing-title"', html)
+        self.assertIn('id="live-now-playing-favourite"', html)
         self.assertIn('fetch("/api/now-playing"', app)
         self.assertIn("setInterval(loadNowPlaying, 5000)", app)
         self.assertIn("display_delay_seconds", app)
@@ -563,6 +565,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn("navigator.mediaSession.playbackState", app)
         self.assertIn("navigator.mediaSession.setPositionState", app)
         self.assertIn("activeMediaPlayer === radioPlayer", app)
+        self.assertIn("renderHeaderHistory(entry", app)
         self.assertIn(
             ".history-player-wrap .video-js.vjs-layout-tiny .vjs-progress-control",
             styles,

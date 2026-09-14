@@ -20,12 +20,6 @@
           <a class="sounds-logo" href="/" aria-label="Home">
             <span class="sound-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
           </a>
-          <nav aria-label="Primary navigation">
-            <a class="active" href="#live-stream" aria-current="page">Live Stream</a>
-            <a href="#process">Process</a>
-            <a href="#programmes">Programmes</a>
-            <a href="#favourites">Favourites</a>
-          </nav>
           <div class="header-now-playing" aria-live="polite" aria-atomic="true">
             <div class="header-artwork">
               <img id="now-playing-image" alt="" hidden />
@@ -52,6 +46,12 @@
               disabled
             ><span aria-hidden="true">♡</span></button>
           </div>
+          <nav aria-label="Primary navigation">
+            <a class="active" href="#live-stream" aria-current="page">Live Stream</a>
+            <a href="#process">Process</a>
+            <a href="#programmes">Programmes</a>
+            <a href="#favourites">Favourites</a>
+          </nav>
         </div>
       </div>
     </header>
@@ -70,6 +70,25 @@
               <b>MUSIC</b>
             </div>
             <div class="player-area">
+              <div class="now-playing" aria-live="polite" aria-atomic="true">
+                <div class="now-playing-artwork">
+                  <img id="live-now-playing-image" alt="" hidden />
+                  <span id="live-now-playing-image-fallback" aria-hidden="true">6</span>
+                </div>
+                <div class="now-playing-copy">
+                  <p id="live-now-playing-label">Now playing</p>
+                  <a id="live-now-playing-title" class="track-search-link">Finding the current track…</a>
+                  <span id="live-now-playing-artist">BBC Radio 6 Music</span>
+                </div>
+                <button
+                  id="live-now-playing-favourite"
+                  class="favourite-button"
+                  type="button"
+                  aria-label="Add the current track to favourites"
+                  title="Add to favourites"
+                  disabled
+                ><span aria-hidden="true">♡</span></button>
+              </div>
               <audio
                 id="live-radio-player"
                 class="video-js"

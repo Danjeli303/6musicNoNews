@@ -28,6 +28,16 @@ const nowPlayingImageFallback = document.querySelector(
 );
 const nowPlayingFavourite = document.querySelector("#now-playing-favourite");
 const headerRadioToggle = document.querySelector("#header-radio-toggle");
+const liveNowPlayingLabel = document.querySelector("#live-now-playing-label");
+const liveNowPlayingTitle = document.querySelector("#live-now-playing-title");
+const liveNowPlayingArtist = document.querySelector("#live-now-playing-artist");
+const liveNowPlayingImage = document.querySelector("#live-now-playing-image");
+const liveNowPlayingImageFallback = document.querySelector(
+  "#live-now-playing-image-fallback",
+);
+const liveNowPlayingFavourite = document.querySelector(
+  "#live-now-playing-favourite",
+);
 
 let pollTimer;
 let displayedJobId;
@@ -41,19 +51,25 @@ let nowPlayingHasTrack = false;
 let currentLiveTrack;
 let pendingNowPlayingSignature = "";
 let activeMediaPlayer;
+let activeHeaderEntry;
 let showingProgrammeContext = false;
 const historyPlayers = new Map();
 
-function updateHeaderRadioToggle(isPlaying) {
+function updateHeaderRadioToggle(isPlaying, source = "live radio") {
   if (!headerRadioToggle) return;
   headerRadioToggle.classList.toggle("is-playing", isPlaying);
   headerRadioToggle.querySelector("span").textContent = isPlaying ? "■" : "▶";
   const action = isPlaying ? "Stop" : "Play";
-  headerRadioToggle.title = `${action} live radio`;
-  headerRadioToggle.setAttribute("aria-label", `${action} live radio`);
+  headerRadioToggle.title = `${action} ${source}`;
+  headerRadioToggle.setAttribute("aria-label", `${action} ${source}`);
 }
 
 function alternateHeaderMetadata() {
+  if (activeHeaderEntry && activeMediaPlayer === activeHeaderEntry.player) {
+    showingProgrammeContext = !showingProgrammeContext;
+    renderHeaderHistory(activeHeaderEntry, showingProgrammeContext);
+    return;
+  }
   if (!nowPlayingHasTrack || !currentLiveTrack) return;
   showingProgrammeContext = !showingProgrammeContext;
   if (showingProgrammeContext) {
@@ -149,11 +165,81 @@ function updateSystemPositionState(player) {
   }
 }
 
+function showArtworkFallback(image, fallback) {
+  image.hidden = true;
+  image.removeAttribute("src");
+  image.alt = "";
+  fallback.hidden = false;
+}
+
+function showArtwork(image, fallback, source, alt) {
+  if (!source) {
+    showArtworkFallback(image, fallback);
+    return;
+  }
+  image.onload = () => {
+    image.hidden = false;
+    fallback.hidden = true;
+  };
+  image.onerror = () => showArtworkFallback(image, fallback);
+  image.alt = alt;
+  image.src = source;
+}
+
+function setTrackLink(element, track, fallback) {
+  element.textContent = track?.title || track?.name || fallback;
+  if (track && (track.title || track.name)) {
+    element.href = window.SkipperFavourites.webSearchUrl(track);
+    element.target = "_blank";
+    element.rel = "noopener";
+  } else {
+    element.removeAttribute("href");
+    element.removeAttribute("target");
+    element.removeAttribute("rel");
+  }
+}
+
+function renderLiveNowPlaying(track) {
+  if (!track.available) {
+    liveNowPlayingLabel.textContent = "Now playing";
+    setTrackLink(liveNowPlayingTitle, undefined, "Track information unavailable");
+    liveNowPlayingArtist.textContent = "BBC Radio 6 Music";
+    showArtworkFallback(liveNowPlayingImage, liveNowPlayingImageFallback);
+    updateFavouriteButton(liveNowPlayingFavourite, undefined);
+    return;
+  }
+  liveNowPlayingLabel.textContent = track.now_playing
+    ? "Now playing"
+    : "Recently played";
+  setTrackLink(liveNowPlayingTitle, track, "Title unavailable");
+  liveNowPlayingArtist.textContent = track.artist || "BBC Radio 6 Music";
+  showArtwork(
+    liveNowPlayingImage,
+    liveNowPlayingImageFallback,
+    track.image_url,
+    `Artwork for ${liveNowPlayingArtist.textContent} – ${liveNowPlayingTitle.textContent}`,
+  );
+  updateFavouriteButton(liveNowPlayingFavourite, track);
+}
+
+function renderHeaderHistory(entry, programmeOnly = false) {
+  const track = programmeOnly ? undefined : entry.currentTrack;
+  showingProgrammeContext = programmeOnly;
+  nowPlayingLabel.textContent = track ? "Playing track" : "Playing programme";
+  setTrackLink(nowPlayingTitle, track, entry.album || entry.title);
+  nowPlayingArtist.textContent = track?.artist || entry.presenter || entry.artist || "BBC Sounds";
+  showArtwork(
+    nowPlayingImage,
+    nowPlayingImageFallback,
+    track?.image_url || entry.artwork,
+    `Artwork for ${entry.title}`,
+  );
+  updateFavouriteButton(nowPlayingFavourite, track);
+  updateHeaderRadioToggle(!entry.player.paused(), entry.title);
+}
+
 function showNowPlayingFallback() {
-  nowPlayingImage.hidden = true;
-  nowPlayingImage.removeAttribute("src");
-  nowPlayingImage.alt = "";
-  nowPlayingImageFallback.hidden = false;
+  showArtworkFallback(nowPlayingImage, nowPlayingImageFallback);
 }
 
 function nowPlayingTrackSignature(track) {
@@ -171,10 +257,12 @@ function renderNowPlaying(track, force = false) {
   if (!force && signature === nowPlayingSignature) return;
   nowPlayingSignature = signature;
   showingProgrammeContext = false;
+  renderLiveNowPlaying(track);
 
   if (!track.available) {
     nowPlayingHasTrack = false;
     currentLiveTrack = undefined;
+    if (activeHeaderEntry && activeMediaPlayer === activeHeaderEntry.player) return;
     nowPlayingLabel.textContent = "Now playing";
     nowPlayingTitle.textContent = "Track information unavailable";
     nowPlayingArtist.textContent = "BBC Radio 6 Music";
@@ -185,25 +273,18 @@ function renderNowPlaying(track, force = false) {
 
   nowPlayingHasTrack = true;
   currentLiveTrack = track;
+  if (activeHeaderEntry && activeMediaPlayer === activeHeaderEntry.player) return;
   nowPlayingLabel.textContent = track.now_playing
     ? "Now playing"
     : "Recently played";
-  nowPlayingTitle.textContent = track.title || "Title unavailable";
-  nowPlayingTitle.href = window.SkipperFavourites.webSearchUrl(track);
-  nowPlayingTitle.target = "_blank";
-  nowPlayingTitle.rel = "noopener";
+  setTrackLink(nowPlayingTitle, track, "Title unavailable");
   nowPlayingArtist.textContent = track.artist || "BBC Radio 6 Music";
-  if (track.image_url) {
-    nowPlayingImage.onload = () => {
-      nowPlayingImage.hidden = false;
-      nowPlayingImageFallback.hidden = true;
-    };
-    nowPlayingImage.onerror = showNowPlayingFallback;
-    nowPlayingImage.alt = `Artwork for ${nowPlayingArtist.textContent} – ${nowPlayingTitle.textContent}`;
-    nowPlayingImage.src = track.image_url;
-  } else {
-    showNowPlayingFallback();
-  }
+  showArtwork(
+    nowPlayingImage,
+    nowPlayingImageFallback,
+    track.image_url,
+    `Artwork for ${nowPlayingArtist.textContent} – ${nowPlayingTitle.textContent}`,
+  );
   updateFavouriteButton(nowPlayingFavourite, track);
   if (activeMediaPlayer === radioPlayer) {
     updateSystemMediaMetadata(track);
@@ -312,6 +393,8 @@ function initialiseRadioPlayer() {
   radioPlayer.on("play", () => {
     enforceExclusivePlayback(radioPlayer);
     activeMediaPlayer = radioPlayer;
+    activeHeaderEntry = undefined;
+    if (currentLiveTrack) renderNowPlaying(currentLiveTrack, true);
     updateSystemMediaMetadata(currentLiveTrack);
     clearSystemPositionState();
     updateSystemPlaybackState("playing");
@@ -580,6 +663,7 @@ function initialiseHistoryPlayers(history) {
       if (!track) {
         if (activeMediaPlayer === player) {
           updateSystemMediaMetadata(undefined, entry);
+          renderHeaderHistory(entry, true);
         }
         return;
       }
@@ -593,6 +677,7 @@ function initialiseHistoryPlayers(history) {
       updateFavouriteButton(entry.favourite, track);
       if (activeMediaPlayer === player) {
         updateSystemMediaMetadata(track, entry);
+        renderHeaderHistory(entry, false);
       }
     };
 
@@ -622,7 +707,9 @@ function initialiseHistoryPlayers(history) {
     player.on("play", () => {
       enforceExclusivePlayback(player);
       activeMediaPlayer = player;
+      activeHeaderEntry = entry;
       renderPlayingTrack();
+      renderHeaderHistory(entry, !entry.currentTrack);
       updateSystemMediaMetadata(entry.currentTrack, {
         title: entry.title,
         artist: entry.artist,
@@ -644,6 +731,7 @@ function initialiseHistoryPlayers(history) {
       if (activeMediaPlayer === player) {
         updateSystemPlaybackState("paused");
         updateSystemPositionState(player);
+        updateHeaderRadioToggle(false, entry.title);
       }
       button.classList.remove("is-playing");
       button.setAttribute("aria-label", `Play ${title}`);
@@ -831,30 +919,48 @@ historyJobs.addEventListener("click", async (event) => {
 });
 
 nowPlayingFavourite.addEventListener("click", () => {
+  const track = activeHeaderEntry?.currentTrack || currentLiveTrack;
+  if (!track) return;
+  window.SkipperFavourites.toggle(track);
+  updateFavouriteButton(nowPlayingFavourite, track);
+});
+
+liveNowPlayingFavourite.addEventListener("click", () => {
   if (!currentLiveTrack) return;
   window.SkipperFavourites.toggle(currentLiveTrack);
-  updateFavouriteButton(nowPlayingFavourite, currentLiveTrack);
+  updateFavouriteButton(liveNowPlayingFavourite, currentLiveTrack);
 });
 
 headerRadioToggle.addEventListener("click", () => {
-  if (!radioPlayer) return;
-  if (radioPlayer.paused()) {
-    const playPromise = radioPlayer.play();
+  const player = activeHeaderEntry?.player || radioPlayer;
+  if (!player) return;
+  if (player.paused()) {
+    const playPromise = player.play();
     if (playPromise?.catch) playPromise.catch(() => updateHeaderRadioToggle(false));
+  } else if (activeHeaderEntry) {
+    stopHistoryPlayer(activeHeaderEntry);
   } else {
-    radioPlayer.pause();
+    player.pause();
   }
 });
 
 window.addEventListener("storage", () => {
-  updateFavouriteButton(nowPlayingFavourite, currentLiveTrack);
+  updateFavouriteButton(
+    nowPlayingFavourite,
+    activeHeaderEntry?.currentTrack || currentLiveTrack,
+  );
+  updateFavouriteButton(liveNowPlayingFavourite, currentLiveTrack);
   historyPlayers.forEach((entry) => {
     updateFavouriteButton(entry.favourite, entry.currentTrack);
   });
 });
 
 window.addEventListener("skipper:favourites-changed", () => {
-  updateFavouriteButton(nowPlayingFavourite, currentLiveTrack);
+  updateFavouriteButton(
+    nowPlayingFavourite,
+    activeHeaderEntry?.currentTrack || currentLiveTrack,
+  );
+  updateFavouriteButton(liveNowPlayingFavourite, currentLiveTrack);
   historyPlayers.forEach((entry) => {
     updateFavouriteButton(entry.favourite, entry.currentTrack);
   });
