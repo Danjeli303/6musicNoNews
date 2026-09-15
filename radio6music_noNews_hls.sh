@@ -8,7 +8,6 @@ NEWS_IDENTIFIER="$SCRIPT_DIR/news_identifier"
 NEWS_MIXER_CONTROL="$SCRIPT_DIR/news_mixer_control"
 SAMPLE_RATE=48000
 NEWS_WINDOW="${NEWS_SCHEDULE:-$SCRIPT_DIR/news_schedule.ini}"
-IDENTIFIER_DELAY_SECONDS=22
 MIXER_CONTROL_ENDPOINT="${MIXER_CONTROL_ENDPOINT:-tcp://127.0.0.1:5555}"
 
 OUT_DIR="${OUT_DIR:-$SCRIPT_DIR/hls_radio6music_noNews}"
@@ -75,11 +74,10 @@ get_stream_start_time() {
 }
 
 mix_with_fip_filter() {
-    delay_ms=$((IDENTIFIER_DELAY_SECONDS * 1000))
     # FFmpeg parses the filter graph and the azmq option separately, so each
     # colon needs two backslashes at the filter-graph layer.
     zmq_address=$(printf '%s' "$MIXER_CONTROL_ENDPOINT" | sed 's/:/\\\\:/g')
-    printf '[0:a]aformat=sample_fmts=fltp:channel_layouts=stereo,adelay=%s:all=1,volume@bbc=1[bbc];' "$delay_ms"
+    printf '[0:a]aformat=sample_fmts=fltp:channel_layouts=stereo,volume@bbc=1[bbc];'
     printf '[1:a]aresample=%s,aformat=sample_fmts=fltp:channel_layouts=stereo,volume@fip=0[fip];' "$SAMPLE_RATE"
     printf '[bbc][fip]amix=inputs=2:duration=first:normalize=0:dropout_transition=0,'
     printf 'alimiter=limit=0.95,azmq=bind_address=%s,aresample=async=1000:first_pts=0[out]' "$zmq_address"

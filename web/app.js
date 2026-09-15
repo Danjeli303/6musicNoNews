@@ -64,11 +64,9 @@ let radioPlayer;
 let historySignature = "";
 let nowPlayingSignature = "";
 let nowPlayingRequestInFlight = false;
-let nowPlayingQueueTimer;
 let nowPlayingHasTrack = false;
 let currentLiveTrack;
 let currentLiveProgramme;
-let pendingNowPlayingSignature = "";
 let activeMediaPlayer;
 let activeHeaderEntry;
 let showingProgrammeContext = false;
@@ -594,7 +592,7 @@ function updateFavouriteButton(button, track) {
   button.setAttribute("aria-label", `${action} favourites: ${description}`);
 }
 
-function queueNowPlaying(track) {
+function updateNowPlaying(track) {
   if (
     !track.available &&
     nowPlayingHasTrack &&
@@ -604,29 +602,9 @@ function queueNowPlaying(track) {
   }
 
   const signature = nowPlayingTrackSignature(track);
-  if (!nowPlayingHasTrack) {
+  if (signature !== nowPlayingSignature || !nowPlayingHasTrack) {
     renderNowPlaying(track);
-    return;
   }
-  if (signature === nowPlayingSignature) {
-    clearTimeout(nowPlayingQueueTimer);
-    pendingNowPlayingSignature = "";
-    return;
-  }
-  if (signature === pendingNowPlayingSignature) {
-    return;
-  }
-
-  const configuredDelay = Number(track.display_delay_seconds);
-  const delaySeconds = Number.isFinite(configuredDelay)
-    ? Math.max(0, Math.min(120, configuredDelay))
-    : 18;
-  clearTimeout(nowPlayingQueueTimer);
-  pendingNowPlayingSignature = signature;
-  nowPlayingQueueTimer = setTimeout(() => {
-    pendingNowPlayingSignature = "";
-    renderNowPlaying(track);
-  }, delaySeconds * 1000);
 }
 
 function setFipToggleState(enabled) {
@@ -703,7 +681,7 @@ async function loadNowPlaying() {
     fipMixerTransitioning = track.news?.transitioning === true;
     setFipToggleState(track.news?.news_active === true);
     updateFipToggleAvailability();
-    queueNowPlaying(track);
+    updateNowPlaying(track);
   } catch (_error) {
     if (!nowPlayingHasTrack) renderNowPlaying({ available: false });
   } finally {

@@ -80,7 +80,6 @@ DEFAULT_NEWS_CONTROL_PIPE = (
 )
 BBC_6MUSIC_SCHEDULE_URL = "https://www.bbc.co.uk/sounds/schedules/bbc_6music"
 BBC_IMAGE_HOST = "ichef.bbci.co.uk"
-DEFAULT_NOW_PLAYING_DELAY_SECONDS = 18
 DEFAULT_SCHEDULE_CACHE_SECONDS = 3600
 DEFAULT_PROGRAMME_LIST_CACHE_SECONDS = 3600
 PROGRAMME_LIST_FORMAT = (
@@ -700,15 +699,6 @@ def get_iplayer_programmes_from_output(output):
         )
     programmes.sort(key=lambda item: item["available_at"], reverse=True)
     return programmes
-
-
-def now_playing_delay_seconds(value):
-    """Return a safe metadata delay between zero and two minutes."""
-    try:
-        delay = float(value)
-    except (TypeError, ValueError):
-        delay = DEFAULT_NOW_PLAYING_DELAY_SECONDS
-    return max(0, min(120, delay))
 
 
 def parse_bbc_sounds_url(value):
@@ -1671,7 +1661,6 @@ class SkipNewsHandler(BaseHTTPRequestHandler):
                         }
                     )
             payload["news"] = news
-            payload["display_delay_seconds"] = self.server.now_playing_delay_seconds
             self._send_json(HTTPStatus.OK, payload)
         elif path == "/api/favourites":
             self._send_json(HTTPStatus.OK, self.server.favourite_store.list())
@@ -1810,14 +1799,6 @@ class SkipNewsServer(ThreadingHTTPServer):
             job_store.output_dir / ".cache" / "get_iplayer_tracklists",
             executable=os.environ.get("GET_IPLAYER", "get_iplayer"),
         )
-        self.now_playing_delay_seconds = now_playing_delay_seconds(
-            os.environ.get(
-                "BBC_NOW_PLAYING_DELAY_SECONDS",
-                DEFAULT_NOW_PLAYING_DELAY_SECONDS,
-            )
-        )
-
-
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default=os.environ.get("SKIP_NEWS_HOST", "127.0.0.1"))

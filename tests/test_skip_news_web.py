@@ -307,15 +307,6 @@ class NowPlayingTests(unittest.TestCase):
         self.assertFalse(result["now_playing"])
         self.assertIsNone(result["image_url"])
 
-    def test_bounds_configured_metadata_delay(self):
-        self.assertEqual(skip_news_web.now_playing_delay_seconds("24.5"), 24.5)
-        self.assertEqual(skip_news_web.now_playing_delay_seconds("-3"), 0)
-        self.assertEqual(skip_news_web.now_playing_delay_seconds("999"), 120)
-        self.assertEqual(
-            skip_news_web.now_playing_delay_seconds("invalid"),
-            skip_news_web.DEFAULT_NOW_PLAYING_DELAY_SECONDS,
-        )
-
     def test_normalizes_fip_track_programme_and_artwork(self):
         result = skip_news_web.fip_now_playing_from_payload(
             {
@@ -906,7 +897,8 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn(".fip-toggle { min-height: 24px; }", styles)
         self.assertIn('fetch("/api/now-playing"', app)
         self.assertIn("setInterval(loadNowPlaying, 5000)", app)
-        self.assertIn("display_delay_seconds", app)
+        self.assertIn("updateNowPlaying(track)", app)
+        self.assertNotIn("display_delay_seconds", app)
         self.assertIn('"mediaSession" in navigator', app)
         self.assertIn("new MediaMetadata", app)
         self.assertIn("navigator.mediaSession.playbackState", app)

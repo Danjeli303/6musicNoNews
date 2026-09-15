@@ -148,9 +148,7 @@ working directory and do not download programme audio.
 
 Set `BBC_NOW_PLAYING_URL` to override the BBC metadata endpoint or
 `FIP_NOW_PLAYING_URL` to override Radio France's public live-metadata endpoint.
-Set `BBC_NOW_PLAYING_DELAY_SECONDS` to adjust the default 18-second display
-delay shared by both sources so the information follows the HLS playback
-latency.
+Live metadata is displayed as soon as it is received.
 
 For host-only use without Docker:
 
@@ -194,9 +192,9 @@ default. Useful environment variables:
 - `NEWS_STATUS_FILE`
 - `NEWS_CONTROL_PIPE`
 
-The live script sends a copy of decoded BBC PCM to `news_identifier`. FFmpeg
-delays only the untouched BBC branch by the classifier look-ahead; FIP remains
-live and current. The identifier emits `NEWS_EVENT` lines on standard error.
+The live script sends a copy of decoded BBC PCM to `news_identifier` while the
+BBC audio continues without an added delay. The identifier emits `NEWS_EVENT`
+lines on standard error.
 `news_mixer_control` applies those events to named FFmpeg volume filters over
 ZeroMQ: the latest `news_on` event selects FIP and the latest `news_off` event
 selects BBC, even when an event is repeated. There are no separate schedule

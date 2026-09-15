@@ -38,7 +38,6 @@ services:
       TZ: ${TZ:-Europe/London}
       SKIP_NEWS_OUTPUT_DIR: /srv/downloads
       BBC_NOW_PLAYING_URL: ${BBC_NOW_PLAYING_URL:-https://rms.api.bbc.co.uk/v2/services/bbc_6music/segments/latest?experience=domestic&offset=0&limit=4}
-      BBC_NOW_PLAYING_DELAY_SECONDS: ${BBC_NOW_PLAYING_DELAY_SECONDS:-18}
       FIP_NOW_PLAYING_URL: ${FIP_NOW_PLAYING_URL:-https://api.radiofrance.fr/livemeta/live/7/transistor_musical_player}
       NEWS_STATUS_FILE: /srv/hls/news-status.json
       NEWS_CONTROL_PIPE: /srv/hls/news-control.fifo
